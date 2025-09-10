@@ -1,0 +1,2 @@
+# Enable bzlmod for future-proofing dependency management (optional but recommended)
+common --enable_bzlmod
