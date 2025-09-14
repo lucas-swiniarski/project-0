@@ -16,10 +16,12 @@ bazel_dep(name = "rules_python", version = "0.31.0")
 # This loads the 'pip' module from the rules_python dependency.
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
-    hub_name = "pip_deps",
+    # The hub_name must be unique across all modules in the dependency graph.
+    # We prefix it with our module name to avoid collisions.
+    hub_name = "simple_transformer_pip_deps",
     # This attribute is mandatory to specify which Python version to use for dependency resolution.
     # "3.11" is a good choice as it's modern and supported by PyTorch.
     python_version = "3.11",
     requirements_lock = "//:requirements.txt",
 )
-use_repo(pip, "pip_deps")
+use_repo(pip, "simple_transformer_pip_deps")
