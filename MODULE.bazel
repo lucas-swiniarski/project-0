@@ -10,7 +10,7 @@ module(
 
 # 1. Declare a dependency on the Python rules for Bazel.
 # Bazel will fetch the version specified here from the Bazel Central Registry.
-bazel_dep(name = "rules_python", version = "0.31.0")
+bazel_dep(name = "rules_python", version = "0.40.0")
 
 # 2. Declare pip dependencies.
 # This loads the 'pip' module from the rules_python dependency.

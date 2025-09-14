@@ -1,8 +1,17 @@
+# Bazel
+/bazel-*
+
+# Bazel Bzlmod
+# It's often recommended to check this file in for applications to have
+# reproducible builds, but it can be ignored for libraries.
+MODULE.bazel.lock
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
 
 # Virtual environment
 venv/
