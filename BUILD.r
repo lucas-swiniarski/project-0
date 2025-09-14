@@ -8,8 +8,8 @@ py_library(
     name = "simple_transformer",
     # The source files that make up this library
     srcs = [
-        "//src/simple_transformer:__init__.py",
-        "//src/simple_transformer:model.py",
+        "__init__.py",
+        "model.py",
     ],
     # Make this library visible to other packages in the workspace
     visibility = ["//visibility:public"],
