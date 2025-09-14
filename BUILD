@@ -1,12 +1,11 @@
-# BUILD file for the simple_transformer library.
+# BUILD file for the simple_transformer library
 
-load("@rules_python//python:defs.bzl", "py_library")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
 # Defines the Python library target
 py_library(
     # The name of our library target
     name = "simple_transformer",
-    python_version = "PY3",
     # The source files that make up this library
     srcs = [
         "__init__.py",
@@ -18,5 +17,21 @@ py_library(
     deps = [
         # This references the 'torch' package fetched via pip_parse in the WORKSPACE
         "@pip_deps//torch",
+    ],
+)
+
+# Defines a runnable Python binary
+py_binary(
+    # The name of our binary target
+    name = "main",
+    # The main source file for the binary
+    srcs = ["main.py"],
+    # Set the Python version for this executable.
+    # Bazel will use the toolchain registered for this version.
+    python_version = "PY3",
+    # Declare dependencies required by the binary
+    deps = [
+        # This binary depends on our simple_transformer library
+        ":simple_transformer",
     ],
 )
