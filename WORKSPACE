@@ -34,3 +34,4 @@ pip_parse(
 load("@pip_deps//:requirements.bzl", "install_deps")
 
 install_deps()
+
