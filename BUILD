@@ -6,6 +6,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 py_library(
     # The name of our library target
     name = "simple_transformer",
+    python_version = "PY3",
     # The source files that make up this library
     srcs = [
         "__init__.py",
