@@ -1,4 +1,4 @@
-# BUILD file for the simple_transformer library
+# BUILD file for the simple_transformer library.
 
 load("@rules_python//python:defs.bzl", "py_library")
 
