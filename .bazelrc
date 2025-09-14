@@ -1,2 +1,0 @@
-# Enable Bzlmod for modern dependency management.
-common --enable_bzlmod

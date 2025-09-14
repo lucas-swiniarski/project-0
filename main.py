@@ -1,5 +1,5 @@
 import torch
-from model import MultiHeadAttention
+from simple_transformer.model import MultiHeadAttention
 
 def main():
     """
