@@ -62,3 +62,15 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     python3 main.py
     ```
 ```
+
+## Orders of magnitude
+
+1. Training capacity: 1 nvidia L4 - 24 GB vram - 2.42×10^14 FLOPS * 3600 * 24 = 2x10^19 FLOPs (f16)
+
+2. Assuming FLOPs ~ 6 x N x D - N trainset tokens, D model params, 100 tokens per params, that's 170M params, 17B tokens.
+
+3. 170M params x 2 bytes / param (f16) = 0.32 GB vram.
+
+* TODO: architecture math. Guides: gpt-2 small is 12 layers, 768 hidden dim, need attention architecture + intermediate size / experts + embedding table.
+
+4. vram: 0.32 gb for model + 1x for gradients, +2x for adam = 1.2 gb vram.
