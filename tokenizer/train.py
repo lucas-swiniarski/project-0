@@ -4,7 +4,7 @@ from datasets import load_from_disk
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.pre_tokenizers import Metaspace
 
 def get_training_corpus(dataset):
     """
@@ -38,7 +38,10 @@ def main():
     # --- 1. Initialize a new tokenizer ---
     # We'll use Byte-Pair Encoding (BPE), a modern and effective algorithm.
     tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-    tokenizer.pre_tokenizer = Whitespace()
+
+    # Use Metaspace pre-tokenizer for better handling of spaces and punctuation.
+    # It replaces whitespace with a special symbol ' ' and allows for lossless decoding.
+    tokenizer.pre_tokenizer = Metaspace()
 
     # --- 2. Train the tokenizer ---
     print(f"Loading training dataset from {args.dataset_dir}...")

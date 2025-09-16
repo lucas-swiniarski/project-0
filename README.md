@@ -30,7 +30,18 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     python3 -m tokenizer.train --dataset-dir /home/lucas/data/v1/train --output-path /home/lucas/tokenizer/v1/tokenizer.json
     ```
 
-5.  **Run the main script (example):**
+5.  **Tokenize the datasets:**
+    This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
+    You can adjust the number of processes with the `--num-proc` flag.
+    ```bash
+    python3 -m tokenizer.tokenize_dataset \
+        --dataset-dir /home/lucas/data/v1 \
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
+        --output-dir /home/lucas/data/v1-tokenized \
+        --num-proc 4
+    ```
+
+6.  **Run the main script (example):**
     ```bash
     python3 main.py
     ```
