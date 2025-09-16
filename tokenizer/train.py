@@ -54,6 +54,7 @@ def main():
     print("Training complete.")
 
     # --- 3. Save the tokenizer ---
+    # Ensure the output directory exists
     os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
     tokenizer.save(args.output_path)
     print(f"Tokenizer saved to {args.output_path}")
