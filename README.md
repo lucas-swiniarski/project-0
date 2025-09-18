@@ -61,7 +61,6 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     ```bash
     python3 main.py
     ```
-```
 
 ## Orders of magnitude
 
