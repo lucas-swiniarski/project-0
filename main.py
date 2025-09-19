@@ -1,6 +1,6 @@
 import torch
 from tqdm import tqdm
-from torch.cuda.amp import GradScaler
+from torch.amp.grad_scaler import GradScaler
 from tokenizers import Tokenizer
 from transformer.model import MyTransformer
 from dataset.data_loader import DataLoader
@@ -40,7 +40,7 @@ def estimate_loss(model, tokenizer, data_laoder, eval_interval, device):
         out[split] = losses.mean()
         
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(f'Generation... :{tokenizer.decode(model.generate(context, max_new_tokens=128)[0].tolist())}')
+    print(f'Generation... :{tokenizer.decode(model.generate(context, max_new_tokens=128)[0].tolist(), skip_special_tokens=False)}')
     model.train()
     return out
 
@@ -87,7 +87,7 @@ def main():
     # Create a dummy input tensor
     # Vocabulary size is 32000, so random integers are in the range [0, 31999]    
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    scaler = GradScaler(enabled=(device == 'cuda'))
+    scaler = GradScaler(device, enabled=(device == 'cuda'))
     
     # Wrap the training loop with tqdm for a progress bar
     with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
