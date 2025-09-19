@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 class MyTransformer(nn.Module):
@@ -28,27 +29,33 @@ class MyTransformer(nn.Module):
         self.num_key_value_groups = num_key_value_groups
         
         self.token_embedding = TokenEmbeddingModel(vocab_size, d_model, context_size)
-        self.blocks = nn.Sequential(
-            TransformerBlock(d_model, num_query_heads, num_key_value_groups),
-            TransformerBlock(d_model, num_query_heads, num_key_value_groups),
-            TransformerBlock(d_model, num_query_heads, num_key_value_groups),
-            TransformerBlock(d_model, num_query_heads, num_key_value_groups),
-            )
+        self.blocks = nn.ModuleList([
+            TransformerBlock(d_model, num_query_heads, num_key_value_groups) for _ in range(num_attn_layers)
+        ])
         self.W_o = nn.Linear(d_model, vocab_size)
         
-    def forward(self, idx, mask=None, target=None):
+    def forward(self, idx, target=None, mask=None):
         x = self.token_embedding(idx)
-        x = self.blocks(x,, mask)
+        for block in self.blocks:
+            x = block(x, mask)
         logits = self.W_o(x)
-        if target:
-            pass
+        
+         if targets is None:
+            loss = None
+        else:
+            B, T, C = logits.shape
+            logits = logits.view(B*T, C)
+            targets = targets.view(B*T)
+            loss = F.cross_entropy(logits, targets)
 
-        return x
+        return logits, loss
         
 
 class TokenEmbeddingModel(nn.Module):
     """
     A simple embedding model to represent tokens inside the transformer.
+    
+    TODO: Compare concat n_embd/2 pos+token emb to sum n_emb pos+token emb methods.
     """ 
 
 
@@ -64,20 +71,16 @@ class TokenEmbeddingModel(nn.Module):
             context_size (int, optional): # of tokens in context of transformer. Defaults to 512.
         """
         super().__init__()
-        assert n_embd % 2 == 0, "n_embd must be even"
-        # TODO: We likely dont want position to be as big as token embedding.
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embd // 2)
-        self.position_embedding_table = nn.Embedding(context_size, n_embd // 2)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(context_size, n_embd)
 
     def forward(self, idx):
         B, T = idx.shape
         device = idx.device
 
-        tok_emb = self.token_embedding_table(idx) # B, T, C
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # T, C
-        pos_emb = pos_emb.unsqueeze(0).repeat(B, 1, 1) # B, T, C
-        x = torch.concat([tok_emb, pos_emb], axis=-1) # B, T, C * 2
-        print(tok_emb.shape, pos_emb.shape, x.shape)
+        tok_emb = self.token_embedding_table(idx) # (B, T, n_embd)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, n_embd)
+        x = tok_emb + pos_emb # (B, T, n_embd)
         return x
 
 class TransformerBlock(nn.Module):
