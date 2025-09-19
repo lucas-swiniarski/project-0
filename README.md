@@ -6,16 +6,17 @@ A simple Transformer library built with PyTorch.
 
 This project uses PyTorch. It's recommended to run it within a Python virtual environment.
 
-1.  **Create and activate a virtual environment:**
+1.  **Create and activate a conda environment:**
     ```bash
-    python3 -m venv venv
-    source venv/bin/activate
+    conda create --name project-0-env python=3.10
+    conda activate project-0-env
     ```
 
 2.  **Install dependencies:**
-    This will install Hugging Face Datasets, and Tokenizers.
+    This will install PyTorch with CUDA support, Hugging Face Datasets, and Tokenizers.
     ```bash
-    pip install datasets tokenizers
+    conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
+    conda install -c conda-forge datasets tokenizers
     ```
 
 3.  **Prepare the dataset:**
