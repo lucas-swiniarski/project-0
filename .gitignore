@@ -12,6 +12,7 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+*.bin
 
 # Virtual environment
 venv/
