@@ -1,5 +1,6 @@
 import torch
 from tqdm import tqdm
+from torch.cuda.amp import GradScaler
 from tokenizers import Tokenizer
 from transformer.model import MyTransformer
 from dataset.data_loader import DataLoader
@@ -39,7 +40,7 @@ def estimate_loss(model, tokenizer, data_laoder, eval_interval, device):
         out[split] = losses.mean()
         
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(f'Generation... :{tokenizer.decode(model.generate(context, max_new_tokens=500)[0].tolist())}')
+    print(f'Generation... :{tokenizer.decode(model.generate(context, max_new_tokens=128)[0].tolist())}')
     model.train()
     return out
 
@@ -86,6 +87,7 @@ def main():
     # Create a dummy input tensor
     # Vocabulary size is 32000, so random integers are in the range [0, 31999]    
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    scaler = GradScaler(enabled=(device == 'cuda'))
     
     # Wrap the training loop with tqdm for a progress bar
     with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
@@ -95,11 +97,16 @@ def main():
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
             x, y = data_loader.get_batch('train')
-            mask = torch.tril(torch.ones(context_size, context_size, device=device))
-            logits, loss = model(x, y, mask)
+            
+            # Mixed precision training context
+            with torch.autocast(device_type=device, dtype=torch.float16, enabled=(device == 'cuda')):
+                mask = torch.tril(torch.ones(context_size, context_size, device=device))
+                logits, loss = model(x, y, mask)
+
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             # Update the progress bar description with the current loss
             pbar.set_postfix(loss=f"{loss.item():.4f}")
