@@ -1,5 +1,6 @@
 # Bazel
 /bazel-*
+*.pt
 
 # Bazel Bzlmod
 # It's often recommended to check this file in for applications to have
@@ -7,9 +8,7 @@
 MODULE.bazel.lock
 
 # Python
-__pycache__/
 *.pyc
-*.pyo
 *.pyd
 .pytest_cache/
 *.bin

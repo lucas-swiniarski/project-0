@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+from enum import Enum
+
+class TrainingMode(Enum):
+    SFT = 'sft'
+    LORA = 'lora'
+    EVAL = 'eval'
+
 class MyTransformer(nn.Module):
     """
     A simple transformer.
@@ -20,20 +27,27 @@ class MyTransformer(nn.Module):
                  num_key_value_groups: int = 4,
                  expansion_factor: int = 4,
                  dropout_rate: float = 0.0,
+                 lora_rank: int = 0,
+                 lora_alpha: float = 1.0,
                  ):
         super().__init__()
         self.context_size = context_size    
         self.token_embedding = TokenEmbeddingModel(vocab_size, d_model, context_size)
         self.blocks = nn.ModuleList([
             TransformerBlock(
-                d_model, num_query_heads, num_key_value_groups, expansion_factor, dropout_rate) for _ in range(num_attn_layers)
+                d_model, num_query_heads, num_key_value_groups, expansion_factor, dropout_rate,
+                lora_rank, lora_alpha
+            ) for _ in range(num_attn_layers)
         ])
+        self.ln = nn.LayerNorm(d_model)
         self.W_o = nn.Linear(d_model, vocab_size)
+        self.mode = TrainingMode.SFT # Default to SFT
         
     def forward(self, idx, targets=None, mask=None):
         x = self.token_embedding(idx)
         for block in self.blocks:
             x = block(x, mask)
+        x = self.ln(x)
         logits = self.W_o(x)
         
         if targets is None:
@@ -56,7 +70,37 @@ class MyTransformer(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
+
+    def set_train_mode(self, mode: TrainingMode):
+        """
+        Sets the training mode for the model, freezing or unfreezing parameters accordingly.
+        - SFT: All parameters are trainable.
+        - LORA: Only LoRA-specific parameters are trainable (to be implemented).
+        - EVAL: All parameters are frozen.
         
+        All set model to .train() or .eval() for e.g. dropout or batchnorm.
+        """
+        self.train()
+        self.mode = mode
+        if mode == TrainingMode.SFT:
+            print("Setting mode to SFT. All parameters are trainable.")
+            for param in self.parameters():
+                param.requires_grad = True
+        elif mode == TrainingMode.EVAL:
+            self.eval()
+            print("Setting mode to EVAL. All parameters are frozen.")
+            for param in self.parameters():
+                param.requires_grad = False
+        elif mode == TrainingMode.LORA:
+            print("Setting mode to LORA. Freezing all non-LoRA parameters.")
+            for param in self.parameters():
+                param.requires_grad = False
+            for name, param in self.named_parameters():
+                if 'lora_' in name:
+                    param.requires_grad = True
+            print(f"LoRA mode enabled. Trainable parameters: "
+                  f"{sum(p.numel() for p in self.parameters() if p.requires_grad)/1e3:.2f}K")
+
 
 class TokenEmbeddingModel(nn.Module):
     """
@@ -102,9 +146,13 @@ class TransformerBlock(nn.Module):
                  num_query_heads: int = 16, 
                  num_key_value_groups: int = 4, 
                  expansion_factor: int = 4,
-                 dropout_rate: float = 0.0):
+                 dropout_rate: float = 0.0,
+                 lora_rank: int = 0,
+                 lora_alpha: float = 1.0,
+                 ):
         super().__init__()
-        self.attn = MultiHeadAttention(d_model, num_query_heads, num_key_value_groups, dropout_rate)
+        self.attn = MultiHeadAttention(
+            d_model, num_query_heads, num_key_value_groups, dropout_rate, lora_rank, lora_alpha)
         self.ffn = FeedForward(d_model, expansion_factor, dropout_rate)
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
@@ -136,11 +184,33 @@ class FeedForward(nn.Module):
         x = self.dropout(x)
         return x
 
+class LoRALayer(nn.Module):
+    def __init__(self, in_features, out_features, rank, alpha):
+        super().__init__()
+        # todo: Read LoRA initialization values.
+        self.lora_a = nn.Parameter(torch.zeros(in_features, rank))
+        self.lora_b = nn.Parameter(torch.zeros(rank, out_features)) # todo - this isn't correct.
+        self.scaling = alpha / rank 
+
+        # Initialize LoRA weights
+        nn.init.kaiming_uniform_(self.lora_a, a=math.sqrt(5))
+        nn.init.zeros_(self.lora_b)
+
+    def forward(self, x):
+        return (x @ self.lora_a @ self.lora_b) * self.scaling
+
 class MultiHeadAttention(nn.Module):
     """
     A simple Multi-Head Attention module.
     """
-    def __init__(self, d_model: int = 256, num_query_heads: int = 16, num_key_value_groups: int = 4, dropout_rate: float = 0.0):
+    def __init__(self, 
+                 d_model: int = 256, 
+                 num_query_heads: int = 16, 
+                 num_key_value_groups: int = 4, 
+                 dropout_rate: float = 0.0,
+                 lora_rank: int = 0,
+                 lora_alpha: float = 1.0,
+                 ):
         super().__init__()
         assert d_model % num_query_heads == 0, "d_model must be divisible by num_query_heads"
         assert num_query_heads % num_key_value_groups == 0, "num_query_heads must be divisible by num_key_value_groups"
@@ -152,19 +222,35 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = d_model // num_query_heads
         self.num_queries_per_group = self.num_query_heads // self.num_key_value_groups
 
+        self.lora_rank = lora_rank
+
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, self.num_key_value_groups * self.head_dim)
         self.W_v = nn.Linear(d_model, self.num_key_value_groups * self.head_dim)
         self.W_o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout_rate)
 
+        if self.lora_rank > 0:
+            self.lora_q = LoRALayer(d_model, d_model, lora_rank, lora_alpha)
+            self.lora_v = LoRALayer(d_model, self.num_key_value_groups * self.head_dim, lora_rank, lora_alpha)
+
     def forward(self, x, mask=None):
         B, T, C = x.shape
 
+        # Original projections
+        q_proj = self.W_q(x)
+        k_proj = self.W_k(x)
+        v_proj = self.W_v(x)
+
+        # Add LoRA if enabled
+        if self.lora_rank > 0:
+            q_proj = q_proj + self.lora_q(x)
+            v_proj = v_proj + self.lora_v(x)
+
         # Project and reshape for multi-head attention
-        Q = self.W_q(x).view(B, T, self.num_query_heads, self.head_dim)
-        K = self.W_k(x).view(B, T, self.num_key_value_groups, self.head_dim)
-        V = self.W_v(x).view(B, T, self.num_key_value_groups, self.head_dim)
+        Q = q_proj.view(B, T, self.num_query_heads, self.head_dim)
+        K = k_proj.view(B, T, self.num_key_value_groups, self.head_dim)
+        V = v_proj.view(B, T, self.num_key_value_groups, self.head_dim)
 
         # Repeat K and V for Grouped-Query Attention        
         if self.num_key_value_groups > 1:
