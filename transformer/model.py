@@ -60,15 +60,40 @@ class MyTransformer(nn.Module):
 
         return logits, loss
     
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, top_p=None):
+        """
+        Generates a sequence of tokens starting from the given context `idx`.
+        The generation process can be controlled by temperature, top-k, and top-p sampling.
+
+        Args:
+            idx (torch.Tensor): The initial context, shape (B, T).
+            max_new_tokens (int): The maximum number of new tokens to generate.
+            temperature (float, optional): Controls randomness. Higher values ( > 1.0) make output more random,
+                                           lower values ( < 1.0) make it more deterministic. Defaults to 1.0.
+            top_k (int, optional): If set, samples from the `k` most likely next tokens. Defaults to None.
+            top_p (float, optional): If set, samples from the smallest set of tokens whose cumulative probability
+                                     exceeds `p`. Defaults to None.
+        """
         if max_new_tokens > self.context_size:
             print(f'Max context size of {self.context_size} lower than number of tokens asked {max_new_tokens}, trimming.')
+
         for _ in range(min(self.context_size, max_new_tokens)):
-            logits, _ = self.forward(idx)
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
+            # Crop context if it exceeds self.context_size
+            logits = self.forward(idx) # (B, T, vocab_size)
+            logits = logits[:, -1, :] / temperature # (B, vocab_size)
+            
+            if top_k > 0:
+                top_k_values, top_k_indicies = torch.top_k(logits, k=top_k, dim=-1) # (B, top_k) (B, top_k)
+                mask = torch.zeros_like(logits, dtype=bool)
+                mask.scatter_(1, top_k_indicies, True)
+                logits.masked_fill_(~mask, float('-inf'))
+                
+            probs = F.softmax(logits, dim=-1) # (B, vocab_size)
+            if top_p > 0:
+                sorted_probs, sorted_index = torch.sort(probs, dim=-1, descending=True) # (B, vocab_size), (B, vocab_size)
+                cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                sorted_indices_to_remove = cum_probs > top_p
+                probs 
         return idx
 
     def set_train_mode(self, mode: TrainingMode):

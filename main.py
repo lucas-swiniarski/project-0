@@ -9,40 +9,40 @@ import os
 
 
 # Data parameters
-batch_size = 32
+batch_size = 64
 context_size = 256
 tokenizer_path = '/home/lucas/tokenizer/v1/tokenizer.json'
 tokenized_data_dir = '/home/lucas/data/v1/tokenized/v2'
 
 # Model hyperparameters
-d_model = 512
-num_attn_layers=12
-num_query_heads=16
-num_key_value_groups=4
+d_model = 384
+num_attn_layers = 6
+num_query_heads = 6
+num_key_value_groups = 3
 expansion_factor = 4
 dropout = 0.2
 
 # LoRA parameters
-lora_rank = 8 # Set to 0 to disable LoRA
+lora_rank = 0 # Set to 0 to disable LoRA
 lora_alpha = 1.0
 
 # Optimization hyperparametrs
 max_iters = 55000
 eval_interval = 500
-eval_iter = 10
+eval_batches = 8
 learning_rate = 3e-4
 
 # Checkpointing
-checkpoint_dir = './checkpoints/25_09_22_model_lora/'
-base_model_path = './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
+checkpoint_dir = './checkpoints/25_09_23_model/'
+base_model_path = None # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
 
 @torch.no_grad()
-def estimate_loss(model, tokenizer, data_laoder, eval_interval, device):
+def estimate_loss(model, tokenizer, data_laoder, eval_batches, device):
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        losses = torch.zeros(eval_iter)
-        for k in range(eval_iter):
+        losses = torch.zeros(eval_batches)
+        for k in range(eval_batches):
             X, Y = data_laoder.get_batch(split)
             logits, loss = model(X, Y)
             losses[k] = loss.item()
@@ -135,7 +135,7 @@ def main():
                 print(f"\nSaving checkpoint to {checkpoint_path}")
                 torch.save(model.state_dict(), checkpoint_path)
 
-                losses = estimate_loss(model, tokenizer, data_loader, eval_interval, device)
+                losses = estimate_loss(model, tokenizer, data_loader, eval_batches, device)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
             x, y = data_loader.get_batch('train')
