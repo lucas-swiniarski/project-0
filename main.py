@@ -22,6 +22,12 @@ num_key_value_groups = 3
 expansion_factor = 4
 dropout = 0.2
 
+# Generation parameters
+max_new_tokens = 128
+top_k = 64
+top_p = 0.8
+temperature = 1.0
+
 # LoRA parameters
 lora_rank = 0 # Set to 0 to disable LoRA
 lora_alpha = 1.0
@@ -37,7 +43,7 @@ checkpoint_dir = './checkpoints/25_09_23_model/'
 base_model_path = None # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
 
 @torch.no_grad()
-def estimate_loss(model, tokenizer, data_laoder, eval_batches, device):
+def estimate_loss(model, tokenizer, data_laoder, eval_batches, max_new_tokens, top_k, top_p, temperature, device):
     out = {}
     model.eval()
     for split in ['train', 'val']:
@@ -47,9 +53,13 @@ def estimate_loss(model, tokenizer, data_laoder, eval_batches, device):
             logits, loss = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
-        
-    context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(f'Generation... :{tokenizer.decode(model.generate(context, max_new_tokens=128)[0].tolist(), skip_special_tokens=False)}')
+    
+    print('Generation... :')
+    context = torch.zeros((2, 1), dtype=torch.long, device=device)
+    context = model.generate(context, max_new_tokens, top_k, top_p, temperature).tolist()
+    sentences = [tokenizer.decode(t, skip_special_tokens=False) for t in context]
+    for sentence in sentences:
+        print(f'New sentence: {sentence}\n\n')
     model.train()
     return out
 
@@ -135,7 +145,8 @@ def main():
                 print(f"\nSaving checkpoint to {checkpoint_path}")
                 torch.save(model.state_dict(), checkpoint_path)
 
-                losses = estimate_loss(model, tokenizer, data_loader, eval_batches, device)
+                losses = estimate_loss(model, tokenizer, data_loader, eval_batches, 
+                                       max_new_tokens, top_k, top_p, temperature, device)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
             x, y = data_loader.get_batch('train')
