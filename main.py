@@ -16,17 +16,17 @@ tokenizer_path = '/home/lucas/tokenizer/v1/tokenizer.json'
 tokenized_data_dir = '/home/lucas/data/v1/tokenized/v2'
 
 # Model hyperparameters
-d_model = 384
-num_attn_layers = 6
-num_query_heads = 6
-num_key_value_groups = 3
+d_model = 1024
+num_attn_layers = 8
+num_query_heads = 8
+num_key_value_groups = 8 # 6 = disable groups.
 expansion_factor = 4
 dropout = 0.2
 
 # Generation parameters
 max_new_tokens = 128
-top_k = 0
-top_p = 0.8
+top_k = 64
+top_p = 0.9
 temperature = 1.0
 
 # LoRA parameters
@@ -34,13 +34,13 @@ lora_rank = 0 # Set to 0 to disable LoRA
 lora_alpha = 1.0
 
 # Optimization hyperparametrs
-max_iters = 100000
+max_iters = 5000
 eval_interval = 500
-eval_batches = 100
+eval_batches = 200
 learning_rate = 3e-4
 
 # Checkpointing
-checkpoint_dir = './checkpoints/25_09_23_model/'
+checkpoint_dir = './checkpoints/25_09_26_model_02/'
 base_model_path = None # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
 
 @torch.no_grad()

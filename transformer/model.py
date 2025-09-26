@@ -42,13 +42,24 @@ class MyTransformer(nn.Module):
         self.ln = nn.LayerNorm(d_model)
         self.W_o = nn.Linear(d_model, vocab_size)
         self.mode = TrainingMode.SFT # Default to SFT
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
         
     def forward(self, 
                 idx: torch.Tensor, 
                 targets: torch.Tensor | None = None, 
                 mask: torch.Tensor | None = None,
                 pos: torch.Tensor | None = None,
-                keys_values: list[torch.Tensor] | None = None,
+                keys_values: list[tuple[torch.Tensor]] | None = None,
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         """Transformer forward pass.
         
@@ -64,7 +75,7 @@ class MyTransformer(nn.Module):
             targets (torch.Tensor, optional): Targets to compute loss of size (B, T). Defaults to None.
             mask (torch.Tensor, optional): Attention mask (e.g. causal) of size (T, T). Defaults to None (encoder-like).
             pos (torch.Tensor, optional): Position indices of size (B, T). Defaults to None.
-            keys_values (list[torch.Tensor], optional): pre-computed keys & values. Defaults to None.
+            keys_values (list[tuple[torch.Tensor]], optional): pre-computed keys & values. Defaults to None.
         Returns:
             tuple[torch.Tensor, torch.Tensor]: logits of size (B, T, vocab_size) and loss (scalar).
         """
@@ -86,18 +97,7 @@ class MyTransformer(nn.Module):
             targets = targets.view(B*T)
             loss = F.cross_entropy(logits, targets)
 
-        return logits, loss, keys_values
-    
-    def decode(self, idx: torch.Tensor, keys_values: list[torch.Tensor]):
-        B, T = idx.shape
-        idx = idx[:, -1:] # (B, 1)
-        x = self.token_embedding(idx, pos=T * torch.ones((B, 1), device=idx.device)) # (B, 1, d_model)
-        new_keys_values = []
-        for i, block in enumerate(self.blocks):
-            x, new_key_value = block.decode(x, keys_values[i])
-            new_keys_values += [new_key_value]
-
-        return x, new_keys_values
+        return logits, loss, new_keys_values
         
     def generate(self, 
                  idx: torch.Tensor, 
@@ -169,7 +169,9 @@ class MyTransformer(nn.Module):
         mask = torch.tril(torch.ones(T_init, T_init, device=idx.device))
         _, _, keys_values = self.forward(idx, mask=mask)
         for _ in range(max_new_tokens):
-            logits, _, keys_values = self.forward(idx[:, -1:], keys_values=keys_values)
+            B, T = idx.shape
+            pos = torch.full((B, 1), T, dtype=torch.long, device=idx.device)
+            logits, _, keys_values = self.forward(idx[:, -1:], pos=pos, keys_values=keys_values, mask=None)
             idx = sample_next_token(idx, logits, top_k, top_p, temperature)
         return idx
               
@@ -281,7 +283,10 @@ class TokenEmbeddingModel(nn.Module):
             f"Input sequence length ({T}) exceeds model's context size ({self.context_size})"
         device = idx.device
         tok_emb = self.token_embedding_table(idx) # (B, T, n_embd)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T, n_embd)
+        
+        if pos is None:
+            pos = torch.arange(T, device=device)
+        pos_emb = self.position_embedding_table(pos) # (B, T, n_embd)
         x = tok_emb + pos_emb # (B, T, n_embd)
         return x
 
@@ -307,10 +312,12 @@ class TransformerBlock(nn.Module):
         self.ln2 = nn.LayerNorm(d_model)
 
     def forward(self, x, mask=None, key_value=None):
-        attn_out, key_value = self.attn(self.ln1(x), mask=mask, key_value=key_value)
-        x = x + attn_out
+        # First sub-layer: Multi-Head Attention with residual connection
+        attn_output, new_key_value = self.attn(self.ln1(x), mask=mask, key_value=key_value)
+        x = x + attn_output
+        # Second sub-layer: Feed-Forward Network with residual connection
         x = x + self.ffn(self.ln2(x))
-        return x, key_value
+        return x, new_key_value
 
 class FeedForward(nn.Module):
     """
@@ -396,6 +403,8 @@ class MultiHeadAttention(nn.Module):
             q_proj = q_proj + self.lora_q(x)
             v_proj = v_proj + self.lora_v(x)
         
+        T_kv = T_q
+        new_key_value = (k_proj, v_proj)
         if key_value:
             # key_value = tuple[(B, T_cached, head_dim * n_head), (B, T_cached, head_dime * n_head)]
             cached_k_proj, cached_v_proj = key_value
@@ -405,9 +414,6 @@ class MultiHeadAttention(nn.Module):
             v_proj = torch.cat((cached_v_proj, v_proj), dim=1)
             T_kv = T_cached + T_q
             new_key_value = (k_proj, v_proj)
-        else:
-            new_key_value = None
-            T_kv = T_q
 
         # Project and reshape for multi-head attention
         Q = q_proj.view(B, T_q, self.num_query_heads, self.head_dim)
@@ -424,7 +430,8 @@ class MultiHeadAttention(nn.Module):
         K = K.transpose(1, 2) # B, num_query, T, head_dim 
         attn_probs = Q @ K.transpose(-1, -2) * self.head_dim**-0.5  # B, num_query, T, T
         if mask is not None:
-            attn_probs = attn_probs.masked_fill(mask == 0,float('-inf'))
+            # Mask has shape (T_q, T_kv)
+            attn_probs = attn_probs.masked_fill(mask[:T_q, :T_kv] == 0, float('-inf'))
         attn_probs = torch.softmax(attn_probs, dim=-1)
         attn_probs = self.dropout(attn_probs)
     
