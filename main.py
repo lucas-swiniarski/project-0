@@ -41,7 +41,7 @@ learning_rate = 3e-4
 
 # Checkpointing
 checkpoint_dir = './checkpoints/25_09_23_model/'
-base_model_path = './checkpoints/25_09_23_model/model_step_46000.pt' # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
+base_model_path = None # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
 
 @torch.no_grad()
 def estimate_loss(model, tokenizer, data_laoder, eval_batches, context_size, max_new_tokens, top_k, top_p, temperature, device):
