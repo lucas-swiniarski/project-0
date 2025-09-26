@@ -130,12 +130,14 @@ class MyTransformer(nn.Module):
             return idx
         
         B, _ = idx.shape
+        log_probs = []
         for _ in range(min(self.context_size, max_new_tokens)):
             T = idx.shape[1]
             mask = torch.tril(torch.ones(T, T, device=idx.device))
             logits, _, _ = self.forward(idx, mask=mask) # (B, T, vocab_size)
-            idx = sample_next_token(idx, logits, top_k, top_p, temperature)
-        return idx
+            idx, log_prob = sample_next_token(idx, logits, top_k, top_p, temperature)
+            log_probs += [log_prob]
+        return idx, torch.concat(log_probs, dim=-1)
 
     def generate_with_caching(self,
                               idx: torch.Tensor, 
@@ -168,12 +170,14 @@ class MyTransformer(nn.Module):
         
         mask = torch.tril(torch.ones(T_init, T_init, device=idx.device))
         _, _, keys_values = self.forward(idx, mask=mask)
+        log_probs = []
         for _ in range(max_new_tokens):
             B, T = idx.shape
             pos = torch.full((B, 1), T, dtype=torch.long, device=idx.device)
             logits, _, keys_values = self.forward(idx[:, -1:], pos=pos, keys_values=keys_values, mask=None)
-            idx = sample_next_token(idx, logits, top_k, top_p, temperature)
-        return idx
+            idx, log_prob = sample_next_token(idx, logits, top_k, top_p, temperature)
+            log_probs += [log_prob]
+        return idx, torch.concat(log_probs, dim=-1)
               
     def set_train_mode(self, mode: TrainingMode):
         """
@@ -237,12 +241,14 @@ def sample_next_token(idx: torch.Tensor,
         sup_top_p_mask = ~torch.concat([
             torch.zeros((B, 1), dtype=torch.bool, device=probs.device), 
             sup_top_p_mask[:, :-1]], axis=-1) # True until first cumsum > top_p, (B, vocab_size)
-        probs = torch.zeros_like(probs).scatter_(1, sorted_probs_idx, sup_top_p_mask * sorted_probs_v)
-        probs = probs / probs.sum(-1).unsqueeze(-1)
+        # Add a small epsilon to prevent division by zero if all probabilities are filtered out
+        probs = torch.zeros_like(probs).scatter_(1, sorted_probs_idx, sup_top_p_mask * sorted_probs_v) + 1e-9
+        probs = probs / probs.sum(-1, keepdim=True)
     
     next_idx = torch.multinomial(probs, num_samples=1)
+    log_prob = torch.gather(logits, 1, next_idx)
     idx = torch.cat((idx, next_idx), dim=1)
-    return idx
+    return idx, log_prob.cpu()
 
 class TokenEmbeddingModel(nn.Module):
     """
