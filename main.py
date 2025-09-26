@@ -4,6 +4,7 @@ from torch.amp.grad_scaler import GradScaler
 from tokenizers import Tokenizer
 from transformer.model import MyTransformer, TrainingMode
 from dataset.data_loader import DataLoader
+import time
 from tokenizers.processors import TemplateProcessing
 import os
 
@@ -24,7 +25,7 @@ dropout = 0.2
 
 # Generation parameters
 max_new_tokens = 128
-top_k = 64
+top_k = 0
 top_p = 0.8
 temperature = 1.0
 
@@ -33,33 +34,55 @@ lora_rank = 0 # Set to 0 to disable LoRA
 lora_alpha = 1.0
 
 # Optimization hyperparametrs
-max_iters = 55000
+max_iters = 100000
 eval_interval = 500
-eval_batches = 8
+eval_batches = 100
 learning_rate = 3e-4
 
 # Checkpointing
 checkpoint_dir = './checkpoints/25_09_23_model/'
-base_model_path = None # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
+base_model_path = './checkpoints/25_09_23_model/model_step_46000.pt' # './checkpoints/25_09_22_model/model_step_500.pt' # Path to a pre-trained model for LoRA or fine-tuning
 
 @torch.no_grad()
-def estimate_loss(model, tokenizer, data_laoder, eval_batches, max_new_tokens, top_k, top_p, temperature, device):
+def estimate_loss(model, tokenizer, data_laoder, eval_batches, context_size, max_new_tokens, top_k, top_p, temperature, device):
     out = {}
     model.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_batches)
         for k in range(eval_batches):
             X, Y = data_laoder.get_batch(split)
-            logits, loss = model(X, Y)
+            logits, loss, _ = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
     
-    print('Generation... :')
-    context = torch.zeros((2, 1), dtype=torch.long, device=device)
-    context = model.generate(context, max_new_tokens, top_k, top_p, temperature).tolist()
-    sentences = [tokenizer.decode(t, skip_special_tokens=False) for t in context]
-    for sentence in sentences:
-        print(f'New sentence: {sentence}\n\n')
+    # --- Generation Comparison ---
+    print('\n--- Generation Comparison ---')
+    # 1. Load a batch from validation
+    X, _ = data_laoder.get_batch('val')
+    # 2. Keep the first context_size / 2 tokens of the first 2 elements
+    context = X[:2, :context_size // 2]
+    
+    # 3. Generate with .generate
+    print("\nGenerating with .generate()...")
+    torch.manual_seed(0) # Set seed for reproducibility of sampling
+    start_time = time.time()
+    generated_tokens = model.generate(context, max_new_tokens, top_k, top_p, temperature)
+    duration = time.time() - start_time
+    print(f"Time taken: {duration:.4f} seconds")
+
+    # 4. Generate with .generate_with_caching
+    print("\nGenerating with .generate_with_caching()...")
+    torch.manual_seed(0) # Set seed for reproducibility of sampling
+    start_time = time.time()
+    generated_tokens_cached = model.generate_with_caching(context, max_new_tokens, top_k, top_p, temperature)
+    duration_cached = time.time() - start_time
+    print(f"Time taken: {duration_cached:.4f} seconds")
+
+    for i in range(len(generated_tokens)):
+        print(f"\n--- Sample {i+1} ---")
+        print(f"  .generate():              {tokenizer.decode(generated_tokens[i].tolist())}")
+        print(f"  .generate_with_caching(): {tokenizer.decode(generated_tokens_cached[i].tolist())}")
+    print('--- End Generation Comparison ---\n')
     model.train()
     return out
 
@@ -140,20 +163,18 @@ def main():
     with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
         for step in pbar:
             if step % eval_interval == 0 or step == max_iters - 1:
-                # Save a checkpoint
+                losses = estimate_loss(model, tokenizer, data_loader, eval_batches, context_size,
+                                       max_new_tokens, top_k, top_p, temperature, device)
+                print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
                 print(f"\nSaving checkpoint to {checkpoint_path}")
                 torch.save(model.state_dict(), checkpoint_path)
-
-                losses = estimate_loss(model, tokenizer, data_loader, eval_batches, 
-                                       max_new_tokens, top_k, top_p, temperature, device)
-                print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             
             x, y = data_loader.get_batch('train')
             
             # Mixed precision training context
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=(device == 'cuda')):
-                logits, loss = model(x, y, mask)
+                logits, loss, _ = model(x, y, mask)
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
