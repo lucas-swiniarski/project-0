@@ -8,7 +8,7 @@ class DataLoader:
     Loads and prepares tokenized data for training.
     It memory-maps the tokenized data, treating it as one large contiguous sequence.
     """
-    def __init__(self, tokenized_dir, context_size, batch_size, device='cpu', device_type='cpu'):
+    def __init__(self, tokenized_dir, context_size, batch_size, device='cpu'):
         self.context_size = context_size
         self.batch_size = batch_size
         self.device = device
@@ -77,7 +77,7 @@ class DataLoader:
         y = torch.stack([torch.from_numpy(data[i+1:i+1+self.context_size].astype(np.int64)) for i in ix])
 
         # Move tensors to the correct device
-        if self.device_type == 'cuda':
+        if self.device == 'cuda':
             return x.pin_memory().to(self.device, non_blocking=True), y.pin_memory().to(self.device, non_blocking=True)
         else:
             return x.to(self.device), y.to(self.device)

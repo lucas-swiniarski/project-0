@@ -2,8 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-
+from typing import Callable
 from enum import Enum
+
+from .model_utils import sample_next_token
 
 class TrainingMode(Enum):
     SFT = 'sft'
@@ -99,18 +101,61 @@ class MyTransformer(nn.Module):
 
         return logits, loss, new_keys_values
         
+    def _autoregressive_loop(self,
+                             idx: torch.Tensor,
+                             use_cache: bool,
+                             step_handler: Callable) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Private helper for autoregressive operations (generation and scoring).
+
+        Args:
+            idx (torch.Tensor): The initial context, shape (B, T).
+            use_cache (bool): If True, use KV caching for faster inference.
+            step_handler (callable): A function that takes (logits, step_index)
+                                     and returns (next_token, log_probability, should_continue).
+        Returns:
+            A tuple containing:
+            - The final sequence (context + new tokens).
+            - The log probabilities of the new tokens.
+        """
+        B, T = idx.shape
+        log_probs = []
+        keys_values = None
+        decode_step = 0
+        should_continue = True
+
+        while should_continue:
+            T = idx.shape[1]
+            if T >= self.context_size:
+                print(f"Sequence length ({T}) reached context size ({self.context_size}). Stopping generation.")
+                break
+
+            inference_mode = 'prefill' if not use_cache or keys_values is None else 'decode'
+            pos = torch.full((B, 1), T - 1, dtype=torch.long, device=idx.device) if inference_mode == 'decode' else None
+            mask = torch.tril(torch.ones(T, T, device=idx.device)) if inference_mode == 'prefill' else None
+            keys_values = keys_values if inference_mode == 'decode' else None
+            logits, _, keys_values = self.forward(
+                idx[:, -1:] if inference_mode == 'decode' else idx,
+                pos=pos,
+                mask=mask, 
+                keys_values=keys_values) # (B, T, vocab_size)
+            
+            next_token, log_prob, should_continue = step_handler(logits, decode_step)
+            idx = torch.cat((idx, next_token), dim=1)
+            log_probs.append(log_prob)
+            decode_step += 1
+
+        return idx, torch.cat(log_probs, dim=1) if log_probs else torch.empty((B, 0))
+    
     def generate(self, 
                  idx: torch.Tensor, 
-                 max_new_tokens: int = 128, 
+                 max_new_tokens: int, 
                  top_k: int = 0, 
-                 top_p: float = 0.0,
-                 temperature: float = 1.0) -> torch.Tensor:
-        """
-        Generates a sequence of tokens starting from the given context `idx`.
-        The generation process can be controlled by temperature, top-k, and top-p sampling.
+                 top_p: float = 0.0, 
+                 temperature: float = 1.0, 
+                 use_cache: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
+        """Generates max_new_tokens from an input sentence idx.
         
-        TODO: Implement context over-flow (remove start of sentence when sentence too long to generate).
-
         Args:
             idx (torch.Tensor): The initial context, shape (B, T).
             max_new_tokens (int): The maximum number of new tokens to generate.
@@ -119,65 +164,45 @@ class MyTransformer(nn.Module):
             top_k (int, optional): If set, samples from the `k` most likely next tokens. Defaults to None.
             top_p (float, optional): If set, samples from the smallest set of tokens whose cumulative probability
                                      exceeds `p`. Defaults to None.
+            use_cache (bool, optional): If set, use KV caching. Defaults to True.
         
         Returns:
-            torch.Tensor: The generated sequence, shape (B, T+max_new_tokens).
+            tuple[torch.Tensor, torch.Tensor]: The generated sequence, shape (B, T+max_new_tokens) and associated log-probs.
         """
         B, T_init = idx.shape
-        max_new_tokens = min(max_new_tokens, self.context_size - T_init)
-        if max_new_tokens <= 0:
-            print("Input sentences longer than context size, can't generate any tokens - T: {T}, context_size: {self.context_size}")
-            return idx
+        if T_init >= self.context_size:
+            print(f"Input sentences length ({T_init}) is too close to context size ({self.context_size}). Cannot generate tokens.")
+            return idx, torch.empty((B, 0))
         
-        B, _ = idx.shape
-        log_probs = []
-        for _ in range(min(self.context_size, max_new_tokens)):
-            T = idx.shape[1]
-            mask = torch.tril(torch.ones(T, T, device=idx.device))
-            logits, _, _ = self.forward(idx, mask=mask) # (B, T, vocab_size)
-            idx, log_prob = sample_next_token(idx, logits, top_k, top_p, temperature)
-            log_probs += [log_prob]
-        return idx, torch.concat(log_probs, dim=-1)
+        n_to_gen = min(max_new_tokens, self.context_size - T_init)
+        if n_to_gen < max_new_tokens:
+            print(f"Warning: Asked to generate {max_new_tokens} tokens, but can only generate {n_to_gen} to stay within context size.")
 
-    def generate_with_caching(self,
-                              idx: torch.Tensor, 
-                              max_new_tokens: int = 128, 
-                              top_k: int = 0, 
-                              top_p: float = 0.0,
-                              temperature: float = 1.0) -> torch.Tensor:
-        """
-        Same as generate, with caching for faster inference.
-        
-        TODO: Implement context over-flow (remove start of sentence when sentence too long to generate).
+        def sampling_handler(logits, decode_step):
+            next_token, log_prob = sample_next_token(logits, top_k, top_p, temperature)
+            return next_token, log_prob, decode_step < n_to_gen - 1
 
-        Args:
-            idx (torch.Tensor): The initial context, shape (B, T).
-            max_new_tokens (int): The maximum number of new tokens to generate.
-            temperature (float, optional): Controls randomness. Higher values ( > 1.0) make output more random,
-                                           lower values ( < 1.0) make it more deterministic. Defaults to 1.0.
-            top_k (int, optional): If set, samples from the `k` most likely next tokens. Defaults to None.
-            top_p (float, optional): If set, samples from the smallest set of tokens whose cumulative probability
-                                     exceeds `p`. Defaults to None.
+        return self._autoregressive_loop(idx, use_cache, sampling_handler)
+
+    def score(self, 
+              prompt: torch.Tensor, 
+              completion: torch.Tensor, 
+              use_cache: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
+        B, T_comp = completion.shape
         
-        Returns:
-            torch.Tensor: The generated sequence, shape (B, T+max_new_tokens).
-        """
-        B, T_init = idx.shape
-        max_new_tokens = min(max_new_tokens, self.context_size - T_init)
-        if max_new_tokens <= 0:
-            print("Input sentences longer than context size, can't generate any tokens - T: {T}, context_size: {self.context_size}")
-            return idx
-        
-        mask = torch.tril(torch.ones(T_init, T_init, device=idx.device))
-        _, _, keys_values = self.forward(idx, mask=mask)
-        log_probs = []
-        for _ in range(max_new_tokens):
-            B, T = idx.shape
-            pos = torch.full((B, 1), T, dtype=torch.long, device=idx.device)
-            logits, _, keys_values = self.forward(idx[:, -1:], pos=pos, keys_values=keys_values, mask=None)
-            idx, log_prob = sample_next_token(idx, logits, top_k, top_p, temperature)
-            log_probs += [log_prob]
-        return idx, torch.concat(log_probs, dim=-1)
+        def scoring_handler(logits, decode_step):
+            # Get the actual next token from the completion sequence
+            target_token = completion[:, decode_step:decode_step+1]
+            
+            # Calculate the log probability of that target token
+            # Note: temperature is not used in scoring, as we want the pure model probability
+            probs = F.softmax(logits[:, -1, :], dim=-1) # Shape: (B, vocab_size)
+            log_prob = torch.log(torch.gather(probs, 1, target_token))
+
+            # Return the target token to "force" it as the next in the sequence
+            return target_token, log_prob, decode_step < T_comp - 1
+
+        return self._autoregressive_loop(prompt, use_cache, scoring_handler)
               
     def set_train_mode(self, mode: TrainingMode):
         """
@@ -209,46 +234,6 @@ class MyTransformer(nn.Module):
             print(f"LoRA mode enabled. Trainable parameters: "
                   f"{sum(p.numel() for p in self.parameters() if p.requires_grad)/1e3:.2f}K")
 
-def sample_next_token(idx: torch.Tensor, 
-                      logits: torch.Tensor, 
-                      top_k: int = 0, 
-                      top_p: float = 0.0,
-                      temperature: float = 1.0) -> torch.Tensor:
-    """Sample next word from logits.
-
-    Args:
-        idx (torch.Tensor): Token indices. Shape (B, T).
-        logits (torch.Tensor): Logits. Shape (B, T, vocab_size).
-        top_k (int, optional): Keep top-k logits. Defaults to 0.
-        top_p (float, optional): Nucleus p. Keep n tokens per batch elem such that sum(prob) >= top_p. Defaults to 0.0.
-        temperature (float, optional): Sampling temperature. Defaults to 1.0.
-
-    Returns:
-        idx: Token indices. Shape (B, T+1).
-    """
-    B, T, vocab_size = logits.shape
-    logits = logits[:, -1, :] / temperature # (B, vocab_size)
-                
-    if top_k > 0:
-        top_k_v, top_k_idx = torch.topk(logits, k=top_k, dim=-1) # (B, top_k)
-        logits[logits < top_k_v[:, -1].unsqueeze(-1)] = float('-inf')
-        
-    probs = F.softmax(logits, dim=-1) # (B, vocab_size)
-
-    if top_p > 0:
-        sorted_probs_v, sorted_probs_idx = torch.sort(probs, descending=True, dim=-1) # (B, vocab_size)
-        sup_top_p_mask = torch.cumsum(sorted_probs_v, dim=-1) > top_p # True when cumsum > top_p (B, vocab_size)
-        sup_top_p_mask = ~torch.concat([
-            torch.zeros((B, 1), dtype=torch.bool, device=probs.device), 
-            sup_top_p_mask[:, :-1]], axis=-1) # True until first cumsum > top_p, (B, vocab_size)
-        # Add a small epsilon to prevent division by zero if all probabilities are filtered out
-        probs = torch.zeros_like(probs).scatter_(1, sorted_probs_idx, sup_top_p_mask * sorted_probs_v) + 1e-9
-        probs = probs / probs.sum(-1, keepdim=True)
-    
-    next_idx = torch.multinomial(probs, num_samples=1)
-    log_prob = torch.gather(logits, 1, next_idx)
-    idx = torch.cat((idx, next_idx), dim=1)
-    return idx, log_prob.cpu()
 
 class TokenEmbeddingModel(nn.Module):
     """
@@ -350,7 +335,7 @@ class LoRALayer(nn.Module):
         super().__init__()
         # todo: Read LoRA initialization values.
         self.lora_a = nn.Parameter(torch.zeros(in_features, rank))
-        self.lora_b = nn.Parameter(torch.zeros(rank, out_features)) # todo - this isn't correct.
+        self.lora_b = nn.Parameter(torch.zeros(rank, out_features))
         self.scaling = alpha / rank 
 
         # Initialize LoRA weights

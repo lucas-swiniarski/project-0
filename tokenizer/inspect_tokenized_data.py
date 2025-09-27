@@ -1,7 +1,6 @@
 import argparse
 from datasets import load_from_disk
-from tokenizers import Tokenizer
-from tokenizers.processors import TemplateProcessing
+from .utils import load_tokenizer
 
 def main():
     parser = argparse.ArgumentParser(description="Interactively inspect tokenized data.")
@@ -30,17 +29,7 @@ def main():
     try:
         raw_dataset = load_from_disk(args.raw_dataset_dir)
         tokenized_dataset = load_from_disk(args.tokenized_dataset_dir)
-        tokenizer = Tokenizer.from_file(args.tokenizer_path)
-
-        # Set up the post-processor to correctly handle special tokens during decoding
-        # This ensures [SOS] and [EOS] are handled correctly and subword tokens are joined.
-        tokenizer.post_processor = TemplateProcessing(
-            single="$A", # The main sequence. We can add special tokens to the template if we want to see them.
-            special_tokens=[
-                ("[SOS]", tokenizer.token_to_id("[SOS]")),
-                ("[EOS]", tokenizer.token_to_id("[EOS]")),
-            ],
-        )
+        tokenizer = load_tokenizer(args.tokenizer_path)
     except FileNotFoundError as e:
         print(f"Error loading files: {e}")
         print("Please ensure you have run the dataset preparation and tokenization scripts first.")

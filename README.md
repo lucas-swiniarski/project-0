@@ -22,7 +22,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 3.  **Prepare the dataset:**
     This script will download the TinyStories and WikiText datasets, process them, and save them to the specified directory.
     ```bash
-    python3 -m dataset.load_datasets --output-dir=/home/lucas/data/v1/raw
+    python3 -m dataset.download_datasets --output-dir=/home/lucas/data/v1/raw
     ```
 
 4.  **Train the tokenizer:**

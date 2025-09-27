@@ -2,38 +2,40 @@ import torch
 from tqdm import tqdm
 from torch.amp.grad_scaler import GradScaler
 from tokenizers import Tokenizer
+from tokenizer.utils import load_tokenizer
 from transformer.model import MyTransformer, TrainingMode
+from transformer import model_utils
 from dataset.data_loader import DataLoader
-from tokenizers.pre_tokenizers import Metaspace as MetaspacePreTokenizer
-from tokenizers.decoders import Metaspace as MetaspaceDecoder
-import time
-from tokenizers.processors import TemplateProcessing
 import os
 
+model_config = {
+    # Hyper-params
+    'd_model': 384,
+    'num_attn_layers': 6,
+    'num_query_heads': 6,
+    'num_key_value_groups': 3,
+    'expansion_factor': 4,
+    'dropout_rate': 0.2,
+    # If lora_rank > 0, train a lora adapter (usually on a pre-trained model).
+    'lora_rank': 0,
+    'lora_alpha': 1.0,
+    # Data parameters, to initialize embeddings.
+    'vocab_size': 32000,
+    'context_size': 256,
+}
+
+gen_params = {
+    'max_new_tokens': 128,
+    'top_k': 64,
+    'top_p': 0.9,
+    'temperature': 1.0
+}
 
 # Data parameters
 batch_size = 64
-context_size = 256
+context_size = model_config.context_size
 tokenizer_path = '/home/lucas/tokenizer/v2/tokenizer.json'
 tokenized_data_dir = '/home/lucas/data/v1/tokenized/v2'
-
-# Model hyperparameters
-d_model = 384
-num_attn_layers = 6
-num_query_heads = 6
-num_key_value_groups = 3 # 6 = disable groups.
-expansion_factor = 4
-dropout = 0.2
-
-# Generation parameters
-max_new_tokens = 128
-top_k = 64
-top_p = 0.9
-temperature = 1.0
-
-# LoRA parameters
-lora_rank = 0 # Set to 0 to disable LoRA
-lora_alpha = 1.0
 
 # Optimization hyperparametrs
 max_iters = 5000
@@ -45,59 +47,6 @@ learning_rate = 3e-4
 checkpoint_dir = './checkpoints/25_09_26_model_02/'
 base_model_path = './checkpoints/25_09_23_model/model_step_46000.pt' # Path to a pre-trained model for LoRA or fine-tuning
 
-@torch.no_grad()
-def estimate_loss(model, data_loader, eval_batches):
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_batches)
-        for k in range(eval_batches):
-            X, Y = data_loader.get_batch(split)
-            logits, loss, _ = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
-
-@torch.no_grad()
-def generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, top_k, top_p, temperature):
-    model.eval()
-    # --- Generation Comparison ---
-    print('\n--- Generation Comparison ---')
-    # 1. Load a batch from validation
-    X, _ = data_loader.get_batch('val')
-    # 2. Keep the first context_size / 2 tokens of the first 2 elements
-    context = X[:2, :context_size // 2]
-
-    # 3. Generate with .generate
-    print("\nGenerating with .generate()...")
-    torch.manual_seed(0) # Set seed for reproducibility of sampling
-    start_time = time.time()
-    generated_tokens, log_probs = model.generate(context, max_new_tokens, top_k, top_p, temperature)
-    duration = time.time() - start_time
-    print(f"Time taken: {duration:.4f} seconds")
-    
-    # 4. Generate with .generate_with_caching
-    print("\nGenerating with .generate_with_caching()...")
-    torch.manual_seed(0) # Set seed for reproducibility of sampling
-    start_time = time.time()
-    generated_tokens_cached, log_probs = model.generate_with_caching(context, max_new_tokens, top_k, top_p, temperature)
-    duration_cached = time.time() - start_time
-    print(f"Time taken: {duration_cached:.4f} seconds")
-    
-    context_len = context.shape[1]
-    for i in range(len(generated_tokens)):
-        print(f"\n--- Sample {i+1} ---")
-        context_text = tokenizer.decode(context[i].tolist())
-        generated_text = tokenizer.decode(generated_tokens[i, context_len:].tolist())
-        print(f"  .generate():")
-        print(f"    Context:   '{context_text}'")
-        print(f"    Generated: '{generated_text}'")
-        generated_text_cached = tokenizer.decode(generated_tokens_cached[i, context_len:].tolist())
-        print(f"  .generate_with_caching():\n    Generated: '{generated_text_cached}'")
-    print('--- End Generation Comparison ---\n')
-    model.train()
-
 def main():
     """
     Main function to instantiate and test the MyTransformer model.
@@ -108,36 +57,14 @@ def main():
     print(f"Using device: {device}")
     
     print("Loading tokenizer...")
-    tokenizer = Tokenizer.from_file(tokenizer_path)
-    # Set the pre-tokenizer to Metaspace to correctly handle spaces during decoding
-    tokenizer.pre_tokenizer = MetaspacePreTokenizer()
-    # The decoder needs to be explicitly set to Metaspace as well
-    tokenizer.decoder = MetaspaceDecoder()
-    tokenizer.post_processor = TemplateProcessing(
-        single="$A", # The main sequence. We can add special tokens to the template if we want to see them.
-        special_tokens=[
-            ("[SOS]", tokenizer.token_to_id("[SOS]")),
-            ("[EOS]", tokenizer.token_to_id("[EOS]")),
-        ],
-    )
+    tokenizer = load_tokenizer(tokenizer_path)
     vocab_size = tokenizer.get_vocab_size()
 
     # Set a seed for reproducibility
     torch.manual_seed(0)
 
     print(f"Init transformer...")
-    model = MyTransformer(
-        vocab_size=vocab_size,
-        d_model=d_model,
-        context_size=context_size,
-        num_attn_layers=num_attn_layers,
-        num_query_heads=num_query_heads,
-        num_key_value_groups=num_key_value_groups,
-        expansion_factor=expansion_factor,
-        dropout_rate=dropout,
-        lora_rank=lora_rank,
-        lora_alpha=lora_alpha,
-    ).to(device)
+    model = MyTransformer(**model_config).to(device)
 
     # Load a base model if specified (e.g., for LoRA training)
     if base_model_path:
@@ -157,7 +84,7 @@ def main():
     print(f"{sum(p.numel() for p in model.parameters())/1e6:.2f}M total parameters.")
     
     # --- Set Training Mode and Optimizer ---
-    train_mode = TrainingMode.LORA if lora_rank > 0 else TrainingMode.SFT
+    train_mode = TrainingMode.LORA if model_config.lora_rank > 0 else TrainingMode.SFT
     model.set_train_mode(train_mode)
 
     # Create optimizer for trainable parameters only
@@ -165,7 +92,7 @@ def main():
     optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate)
 
     print("Loading data...")
-    data_loader = DataLoader(tokenized_data_dir, context_size, batch_size, device, device)
+    data_loader = DataLoader(tokenized_data_dir, context_size, batch_size, device)
     n_batches_per_epoch = data_loader.get_n_batches_per_epoch()
     print(f"One epoch every {n_batches_per_epoch} batches.")
 
@@ -177,12 +104,12 @@ def main():
     mask = torch.tril(torch.ones(context_size, context_size, device=device))
     # Wrap the training loop with tqdm for a progress bar
     
-    generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, top_k, top_p, temperature)
+    model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
     return
     with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
         for step in pbar:
             if step % eval_interval == 0 or step == max_iters - 1:
-                losses = estimate_loss(model, data_loader, eval_batches)
+                losses = model_utils.estimate_loss(model, data_loader, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
