@@ -39,6 +39,7 @@ def sample_next_token(logits: torch.Tensor,
     
     next_idx = torch.multinomial(probs, num_samples=1)
     log_prob = torch.log(torch.gather(probs, 1, next_idx))
+    return next_idx, log_prob.cpu()
     return next_idx, log_prob
 
 @torch.no_grad()
@@ -48,8 +49,10 @@ def estimate_loss(model, data_loader, eval_batches):
     for split in ['train', 'val']:
         losses = torch.zeros(eval_batches)
         for k in range(eval_batches):
-            X, Y = data_loader.get_batch(split)
-            logits, loss, _ = model(X, Y)
+            X, Y = data_loader.get_batch(split) # (B, T)
+            B, T = X.shape
+            mask = torch.tril(torch.ones(T, T, device=X.device))
+            logits, loss, _ = model(X, Y, mask=mask)
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -63,23 +66,18 @@ def generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, t
     # 1. Load a batch from validation
     X, _ = data_loader.get_batch('val')
     # 2. Keep the first context_size / 2 tokens of the first 2 elements
-    context = X[:2, :context_size // 2]
+    context = X[:1, :context_size // 2]
 
     # 3. Generate with caching (default)
     print("\nGenerating with caching...")
-    torch.manual_seed(0) # Set seed for reproducibility of sampling
     start_time = time.time()
     generated_tokens_cached, _ = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=True)
     duration_cached = time.time() - start_time
-    print(f"Time taken: {duration_cached:.4f} seconds")
 
     # 4. Generate without caching
-    print("\nGenerating without caching...")
-    torch.manual_seed(0) # Reset seed for reproducibility
     start_time = time.time()
     generated_tokens, _ = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=False)
     duration = time.time() - start_time
-    print(f"Time taken: {duration:.4f} seconds")
 
     context_len = context.shape[1]
     for i in range(len(generated_tokens)):
@@ -91,5 +89,6 @@ def generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, t
         print(f"    Generated: '{generated_text}'")
         generated_text_cached = tokenizer.decode(generated_tokens_cached[i, context_len:].tolist())
         print(f"  With cache:\n    Generated: '{generated_text_cached}'")
+    print(f'Time to generate - cache: {duration_cached:.4f}s, no cache: {duration:.4f}s')
     print('--- End Generation Comparison ---\n')
     model.train()

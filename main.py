@@ -33,14 +33,14 @@ gen_params = {
 
 # Data parameters
 batch_size = 64
-context_size = model_config.context_size
+context_size = model_config['context_size']
 tokenizer_path = '/home/lucas/tokenizer/v2/tokenizer.json'
 tokenized_data_dir = '/home/lucas/data/v1/tokenized/v2'
 
 # Optimization hyperparametrs
 max_iters = 5000
 eval_interval = 500
-eval_batches = 200
+eval_batches = 50
 learning_rate = 3e-4
 
 # Checkpointing
@@ -84,7 +84,7 @@ def main():
     print(f"{sum(p.numel() for p in model.parameters())/1e6:.2f}M total parameters.")
     
     # --- Set Training Mode and Optimizer ---
-    train_mode = TrainingMode.LORA if model_config.lora_rank > 0 else TrainingMode.SFT
+    train_mode = TrainingMode.LORA if model_config['lora_rank'] > 0 else TrainingMode.SFT
     model.set_train_mode(train_mode)
 
     # Create optimizer for trainable parameters only
@@ -104,13 +104,13 @@ def main():
     mask = torch.tril(torch.ones(context_size, context_size, device=device))
     # Wrap the training loop with tqdm for a progress bar
     
-    model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
-    return
     with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
         for step in pbar:
             if step % eval_interval == 0 or step == max_iters - 1:
+                model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
                 losses = model_utils.estimate_loss(model, data_loader, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                
                 
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
                 print(f"\nSaving checkpoint to {checkpoint_path}")

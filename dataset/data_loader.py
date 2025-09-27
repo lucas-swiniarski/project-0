@@ -12,7 +12,6 @@ class DataLoader:
         self.context_size = context_size
         self.batch_size = batch_size
         self.device = device
-        self.device_type = device_type
 
         # Load datasets for train and validation
         train_data_path = os.path.join(tokenized_dir, 'train')
