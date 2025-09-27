@@ -60,6 +60,9 @@ def estimate_loss(model, data_loader, eval_batches):
 
 @torch.no_grad()
 def generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, top_k, top_p, temperature):
+    # Save the current RNG state to isolate generation from training randomness
+    rng_state = torch.get_rng_state()
+    # Optionally, set a fixed seed for deterministic generation for comparison
     model.eval()
     # --- Generation Comparison ---
     print('\n--- Generation Comparison ---')
@@ -71,12 +74,14 @@ def generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, t
     # 3. Generate with caching (default)
     print("\nGenerating with caching...")
     start_time = time.time()
-    generated_tokens_cached, _ = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=True)
+    torch.manual_seed(0)
+    generated_tokens_cached, log_probs_cached = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=True)
     duration_cached = time.time() - start_time
 
     # 4. Generate without caching
     start_time = time.time()
-    generated_tokens, _ = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=False)
+    torch.manual_seed(0)
+    generated_tokens, log_probs = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=False)
     duration = time.time() - start_time
 
     context_len = context.shape[1]
@@ -90,5 +95,8 @@ def generate_text(model, tokenizer, data_loader, context_size, max_new_tokens, t
         generated_text_cached = tokenizer.decode(generated_tokens_cached[i, context_len:].tolist())
         print(f"  With cache:\n    Generated: '{generated_text_cached}'")
     print(f'Time to generate - cache: {duration_cached:.4f}s, no cache: {duration:.4f}s')
+    print(f'log-probs - cache: {log_probs_cached.mean().item():.4f}, no cache: {log_probs.mean().item():.4f}')
     print('--- End Generation Comparison ---\n')
+    # Restore the original RNG state
+    torch.set_rng_state(rng_state)
     model.train()
