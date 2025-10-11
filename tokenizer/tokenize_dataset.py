@@ -2,25 +2,7 @@ import os
 import argparse
 from datasets import load_from_disk
 from tokenizers import Tokenizer
-
-def tokenize_function(examples, tokenizer):
-    """
-    Tokenizes a batch of text examples.
-    We add Start Of Sentence ([SOS]) and End Of Sentence ([EOS]) tokens.
-    """
-    # The tokenizer expects a list of strings.
-    output = tokenizer.encode_batch(examples["text"])
-    
-    # The output of encode_batch is a list of Encoding objects.
-    # We extract the IDs and add SOS/EOS tokens.
-    sos_token_id = tokenizer.token_to_id("[SOS]")
-    eos_token_id = tokenizer.token_to_id("[EOS]")
-
-    all_token_ids = []
-    for encoding in output:
-        all_token_ids.append([sos_token_id] + encoding.ids + [eos_token_id])
-
-    return {"input_ids": all_token_ids}
+import tokenizer.profiles as tokenizer_profiles
 
 def main():
     parser = argparse.ArgumentParser(description="Tokenize datasets using a trained tokenizer.")
@@ -48,11 +30,25 @@ def main():
         default=4,
         help='Number of processes to use for tokenization.'
     )
+    parser.add_argument(
+        '--tokenizer-profile',
+        type=str,
+        default='pre_training_v1',
+        help='Name of the tokenizer profile to use.'
+    )
+    parser.add_argument(
+        '--tokenizer-mode',
+        type=str,
+        default='pre_training',
+        help='Mode used for tokenizing, depends on the tokenizer profile.'
+    )
     args = parser.parse_args()
 
     # --- 1. Load tokenizer and datasets ---
-    print(f"Loading tokenizer from {args.tokenizer_path}...")
+    print(f"Loading tokenizer from {args.tokenizer_path}, profile {args.tokenizer_profile} mode {args.tokenizer_mode}...")
     tokenizer = Tokenizer.from_file(args.tokenizer_path)
+    tokenizer_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[args.tokenizer_profile]()
+    tokenizer = tokenizer_profile.configure_tokenizer(tokenizer)
 
     print(f"Loading datasets from {args.dataset_dir}...")
     raw_datasets = {
@@ -60,18 +56,33 @@ def main():
         for split in ["train", "validation", "test"]
     }
 
+    # Initialize args like this, otherwise args gets lost in parrallel processing .map not sure why.
+    
+    local_tokenizer = Tokenizer.from_file(args.tokenizer_path)
+    local_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[args.tokenizer_profile]()
+    local_tokenizer = local_profile.configure_tokenizer(local_tokenizer)
+
+    def tokenize_function(examples):
+        # Reload tokenizer and profile in each process to ensure correct state
+        return local_profile.tokenize_datasets(
+            examples, 
+            tokenizer=local_tokenizer, 
+            mode=args.tokenizer_mode
+        )
+
     # --- 2. Tokenize datasets ---
     print("Tokenizing datasets...")
     tokenized_datasets = {}
+        
     for split, dataset in raw_datasets.items():
         print(f"Tokenizing {split} set...")
         tokenized_datasets[split] = dataset.map(
-            tokenize_function,
+            tokenize_function,  # Use the new helper function
             batched=True,
-            fn_kwargs={'tokenizer': tokenizer},
-            remove_columns=["text"], # We no longer need the raw text
+            remove_columns=tokenizer_profile.tokenized_columns_to_remove(args.tokenizer_mode),
             num_proc=args.num_proc
         )
+        
         # --- 3. Save tokenized datasets ---
         output_path = os.path.join(args.output_dir, split)
         print(f"Saving tokenized {split} set to {output_path}...")

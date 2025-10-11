@@ -2,7 +2,7 @@
 
 A simple Transformer library built with PyTorch.
 
-## Setup and Running
+## Setup
 
 This project uses PyTorch. It's recommended to run it within a Python virtual environment.
 
@@ -19,49 +19,83 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     conda install -c conda-forge datasets tokenizers
     ```
 
-3.  **Prepare the dataset:**
+## Pre-training
+
+1.  **Download the dataset:**
     This script will download the TinyStories and WikiText datasets, process them, and save them to the specified directory.
     ```bash
-    python3 -m dataset.download_datasets --output-dir=/home/lucas/data/v1/raw
+    python3 -m dataset.pre_training.download_dataset --output-dir=/home/lucas/data/v1/raw/pre_training
     ```
 
-4.  **Train the tokenizer:**
+2.  **Train the tokenizer:**
     This script trains a new BPE tokenizer on the training data created in the previous step and saves it.
     ```bash
-    python3 -m tokenizer.train --dataset-dir /home/lucas/data/v1/raw/train --output-path /home/lucas/tokenizer/v2/tokenizer.json
+    python3 -m tokenizer.train --dataset-dir /home/lucas/data/v1/raw/train --output-path /home/lucas/tokenizer/v1/tokenizer.json
     ```
 
-5.  **Tokenize the datasets:**
+3.  **Tokenize the datasets:**
     This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
     You can adjust the number of processes with the `--num-proc` flag.
     ```bash
     python3 -m tokenizer.tokenize_dataset \
-        --dataset-dir /home/lucas/data/v1/raw \
-        --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
-        --output-dir /home/lucas/data/v1/tokenized/v2 \
+        --dataset-dir /home/lucas/data/v1/raw/pre_training \
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
+        --output-dir /home/lucas/data/v1/tokenized/pre_training/v2 \
         --num-proc 4
     ```
 
-6.  **Inspect the tokenized data (Optional):**
+4.  **Inspect the tokenized data (Optional):**
     This script allows you to interactively view how the raw text from the test set was tokenized. It's useful for verifying that the tokenizer is working as expected.
     ```bash
     python3 -m tokenizer.inspect_tokenized_data \
-        --raw-dataset-dir /home/lucas/data/v1/raw/test \
+        --raw-dataset-dir /home/lucas/data/v1/pre_training/raw/test \
         --tokenized-dataset-dir /home/lucas/data/v1/tokenized/v2/test \
-        --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
     ```
 
-7.  **Count tokens in datasets (Optional):**
+5.  **Count tokens in datasets (Optional):**
     This script counts the total number of tokens in the train, validation, and test sets after tokenization.
     ```bash
     python3 -m tokenizer.count_tokenized_data \
-        --tokenized-dir /home/lucas/data/v1/tokenized/v2
+        --tokenized-dir /home/lucas/data/v1/tokenized/pre_training/v2
     ```
 
-8.  **Run the main script (example):**
+6.  **Run the main script (example):**
     ```bash
-    python3 main.py
+    python3 pre_training.py
     ```
+
+## Post-training - SFT
+
+1.  **Download the dataset:**
+    This script will download the Alpaca cleaned datasets, process them, and save them to the specified directory.
+    ```bash
+    python3 -m dataset.post_training.sft.download_dataset --output-dir=/home/lucas/data/v1/raw/post_training/sft --tokenizer-profile=post_training_v1
+    ```
+
+2.  **Tokenize the datasets:**
+    This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
+    You can adjust the number of processes with the `--num-proc` flag.
+    ```bash
+    python3 -m tokenizer.tokenize_dataset \
+        --dataset-dir /home/lucas/data/v1/raw/post_training/sft \
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
+        --output-dir /home/lucas/data/v1/tokenized/post_training/sft \
+        --tokenizer-profile=post_training_v1 \
+        --tokenizer-mode=post_training_sft \
+        --num-proc 4
+    ```
+
+3.  **Inspect the tokenized data (Optional):**
+    ```bash
+    python3 -m tokenizer.inspect_tokenized_data \
+        --raw-dataset-dir /home/lucas/data/v1/raw/post_training/sft \
+        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/post_training/sft \
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
+    ```
+
+
+## Post-training - DPO
 
 ## Orders of magnitude
 

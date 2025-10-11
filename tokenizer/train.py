@@ -4,6 +4,7 @@ from datasets import load_from_disk
 from tokenizers import Tokenizer
 from tokenizers.trainers import BpeTrainer
 from .utils import create_tokenizer
+import tokenizer.profiles as profiles
 
 def get_training_corpus(dataset):
     """
@@ -32,16 +33,23 @@ def main():
         default='/home/lucas/tokenizer/v1/tokenizer.json',
         help='Path where the trained tokenizer will be saved.'
     )
+    parser.add_argument(
+        '--tokenizer-profile',
+        type=str,
+        default='pre_training_v1',
+        help='See tokenizer.profiles.'
+    )
     args = parser.parse_args()
-
+    
     # --- 1. Initialize a new tokenizer ---
-    tokenizer = create_tokenizer()
+    profile = profiles.TOKENIZER_NAME_TO_PROFILE[args.tokenizer_profile]()
+    tokenizer = profile.create_tokenizer()
 
     # --- 2. Train the tokenizer ---
     print(f"Loading training dataset from {args.dataset_dir}...")
     train_dataset = load_from_disk(args.dataset_dir)
 
-    trainer = BpeTrainer(vocab_size=args.vocab_size, special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]"])
+    trainer = BpeTrainer(vocab_size=args.vocab_size, special_tokens=profile.get_special_tokens())
     
     print(f"Training tokenizer with vocab size {args.vocab_size}...")
     tokenizer.train_from_iterator(get_training_corpus(train_dataset), trainer=trainer)

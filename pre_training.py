@@ -1,11 +1,11 @@
 import torch
 from tqdm import tqdm
 from torch.amp.grad_scaler import GradScaler
-from tokenizers import Tokenizer
-from tokenizer.utils import load_tokenizer
+import tokenizer.profiles as tokenizer_profiles
 from transformer.model import MyTransformer, TrainingMode
 from transformer import model_utils
-from dataset.data_loader import DataLoader
+from tokenizers import Tokenizer
+from dataset.pre_training.data_loader import DataLoader
 import os
 
 model_config = {
@@ -20,8 +20,8 @@ model_config = {
     'lora_rank': 0,
     'lora_alpha': 1.0,
     # Data parameters, to initialize embeddings.
-    'vocab_size': 32000,
-    'context_size': 256,
+    'vocab_size': -1, # Will be set dynamically from the tokenizer
+    'context_size': 512,
 }
 
 gen_params = {
@@ -32,20 +32,21 @@ gen_params = {
 }
 
 # Data parameters
-batch_size = 64
+batch_size = 32
 context_size = model_config['context_size']
-tokenizer_path = '/home/lucas/tokenizer/v2/tokenizer.json'
-tokenized_data_dir = '/home/lucas/data/v1/tokenized/v2'
+tokenizer_path = '/home/lucas/tokenizer/v1/tokenizer.json'
+tokenizer_profile_name = 'pre_training_v1' # Or 'post_training_v1'
+tokenized_data_dir = '/home/lucas/data/data/v1/tokenized/pre_training'
 
 # Optimization hyperparametrs
-max_iters = 5000
+max_iters = 25000
 eval_interval = 500
 eval_batches = 50
 learning_rate = 3e-4
 
 # Checkpointing
-checkpoint_dir = './checkpoints/25_09_26_model_02/'
-base_model_path = './checkpoints/25_09_23_model/model_step_46000.pt' # Path to a pre-trained model for LoRA or fine-tuning
+checkpoint_dir = './checkpoints/25_10_11_model/'
+base_model_path = '' # './checkpoints/25_09_23_model/model_step_46000.pt' Path to a pre-trained model for continue fine-tuning or LoRA.
 
 def main():
     """
@@ -57,9 +58,12 @@ def main():
     print(f"Using device: {device}")
     
     print("Loading tokenizer...")
-    tokenizer = load_tokenizer(tokenizer_path)
-    vocab_size = tokenizer.get_vocab_size()
+    tokenizer = Tokenizer.from_file(tokenizer_path)
+    tokenizer_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[tokenizer_profile_name]()
+    tokenizer = tokenizer_profile.configure_tokenizer(tokenizer)
+    model_config['vocab_size'] = tokenizer.get_vocab_size()
 
+    print(f"Vocabulary size: {model_config['vocab_size']}")
     # Set a seed for reproducibility
     torch.manual_seed(0)
 
@@ -114,7 +118,11 @@ def main():
                 
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
                 print(f"\nSaving checkpoint to {checkpoint_path}")
-                torch.save(model.state_dict(), checkpoint_path)
+                checkpoint = {
+                    'model_config': model_config,
+                    'model_state_dict': model.state_dict(),
+                }
+                torch.save(checkpoint, checkpoint_path)
             
             x, y = data_loader.get_batch('train')
             
