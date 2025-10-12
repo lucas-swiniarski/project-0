@@ -53,14 +53,13 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
         --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
     ```
 
-5.  **Count tokens in datasets (Optional):**
     This script counts the total number of tokens in the train, validation, and test sets after tokenization.
     ```bash
     python3 -m tokenizer.count_tokenized_data \
         --tokenized-dir /home/lucas/data/v1/tokenized/pre_training/v2
-    ```
+    ```    
 
-6.  **Run the main script (example):**
+5.  **Run the main script (example):**
     ```bash
     python3 pre_training.py
     ```
@@ -89,11 +88,25 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 3.  **Inspect the tokenized data (Optional):**
     ```bash
     python3 -m tokenizer.inspect_tokenized_data \
-        --raw-dataset-dir /home/lucas/data/v1/raw/post_training/sft \
-        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/post_training/sft \
+        --raw-dataset-dir /home/lucas/data/v1/raw/post_training/sft/train \
+        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/post_training/sft/train \
         --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
     ```
 
+     This script counts the total number of tokens in the train, validation, and test sets after tokenization.
+    ```bash
+    python3 -m tokenizer.count_tokenized_data \
+        --tokenized-dir /home/lucas/data/v1/tokenized/post_training/sft
+    ```    
+
+4. **Train model:**
+    First change parameters of post_training_sft.py
+
+    Then run
+    ```bash
+    python3 post_training_sft.py
+    ```
+    
 
 ## Post-training - DPO
 

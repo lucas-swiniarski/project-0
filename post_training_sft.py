@@ -38,7 +38,7 @@ tokenized_data_dir = '/home/lucas/data/v1/tokenized/post_training/sft'
 
 # Optimization hyperparametrs
 max_iters = 6000
-eval_interval = 250
+eval_interval = 50
 eval_batches = 50
 learning_rate = 1e-4 # Usually lower for fine-tuning
 
@@ -120,7 +120,7 @@ def main():
     # For now, we pass None and rely on the dataloader's truncation.
     # A better approach would be to handle padding masks in the model.
     
-    with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
+    with tqdm(range(max_iters), desc="Training", unit="step", ncols=120) as pbar:
         for step in pbar:
             if step > 0 and (step % eval_interval == 0 or step == max_iters - 1):
                 model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)

@@ -76,34 +76,32 @@ def generate_text(model: 'MyTransformer',
     rng_state = torch.get_rng_state()
     model.eval()
     
-    # 1. Load a batch from validation
-    X, _ = data_loader.get_batch('val')
-    # 2. Keep the first context_size / 2 tokens of the first element
-    context = X[:1, :context_size // 2]
+    # 1. Load a test data point
+    # get_batch(test) return (1, input_seq_len)
+    X, _ = data_loader.get_batch('test')
 
-    # 3. Generate with caching
+    # 2. Generate with caching
     print("\n--- Generating Text (with cache) ---")
     start_time = time.time()
-    generated_tokens_cached, log_probs_cached = model.generate(context, 
+    generated_tokens_cached, log_probs_cached = model.generate(X, 
                                                                max_new_tokens=max_new_tokens, 
                                                                top_k=top_k, 
                                                                top_p=top_p, 
                                                                temperature=temperature, use_cache=True)
     duration_cached = time.time() - start_time
 
-    context_len = context.shape[1]
-    for i in range(len(generated_tokens_cached)):
-        print(f"\n--- Sample {i+1} ---")
-        context_text = tokenizer.decode(context[i].tolist(), skip_special_tokens=False)
-        generated_text_cached = tokenizer.decode(generated_tokens_cached[i, context_len:].tolist(), skip_special_tokens=False)
-        print(f"  Context:   '{context_text}'")
-        print(f"  Generated: '{generated_text_cached}'")
+    context_len = X.shape[1]
+    print(f"\n--- Sample ---")
+    context_text = tokenizer.decode(X[0].tolist(), skip_special_tokens=False)
+    generated_text_cached = tokenizer.decode(generated_tokens_cached[0, context_len:].tolist(), skip_special_tokens=False)
+    print(f"  Context:   '{context_text}'")
+    print(f"  Generated: '{generated_text_cached}'")
     print(f'Time to generate: {duration_cached:.4f}s')
 
     if also_no_cache_decode:
         print("\n--- Comparing with non-cached generation ---")
         start_time = time.time()
-        generated_tokens, log_probs = model.generate(context, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=False)
+        generated_tokens, log_probs = model.generate(X, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=False)
         duration = time.time() - start_time
         
         generated_text = tokenizer.decode(generated_tokens[0, context_len:].tolist(), skip_special_tokens=False)

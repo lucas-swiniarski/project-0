@@ -108,7 +108,7 @@ def main():
     mask = torch.tril(torch.ones(context_size, context_size, device=device))
     # Wrap the training loop with tqdm for a progress bar
     
-    with tqdm(range(max_iters), desc="Training", unit="step") as pbar:
+    with tqdm(range(max_iters), desc="Training", unit="step", ncols=120) as pbar:
         for step in pbar:
             if step % eval_interval == 0 or step == max_iters - 1:
                 model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)

@@ -16,9 +16,11 @@ class DataLoader:
         # Load datasets for train and validation
         train_data_path = os.path.join(tokenized_dir, 'train')
         val_data_path = os.path.join(tokenized_dir, 'validation')
+        test_data_path = os.path.join(tokenized_dir, 'test')
 
         self.train_tokens = self._load_and_mmap(train_data_path, "train_tokens.bin")
         self.val_tokens = self._load_and_mmap(val_data_path, "val_tokens.bin")
+        self.test_tokens = load_from_disk(test_data_path)
 
         print(f"Loaded training data with {len(self.train_tokens):,} tokens.")
         print(f"Loaded validation data with {len(self.val_tokens):,} tokens.")
@@ -62,21 +64,32 @@ class DataLoader:
     def get_n_batches_per_epoch(self):
         return len(self.train_tokens) // (self.batch_size * self.context_size)
     
-    def get_batch(self, split):
+    def get_batch(self, split) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get a random batch of data for training or validation.
         """
-        data = self.train_tokens if split == 'train' else self.val_tokens
+        if split in ('train', 'val'):
+            data = self.train_tokens if split == 'train' else self.val_tokens
         
-        # Generate random starting indices for each sequence in the batch
-        ix = torch.randint(len(data) - self.context_size-1, (self.batch_size,))
-        
-        # Create input sequences (x) and target sequences (y)
-        x = torch.stack([torch.from_numpy(data[i:i+self.context_size].astype(np.int64)) for i in ix])
-        y = torch.stack([torch.from_numpy(data[i+1:i+1+self.context_size].astype(np.int64)) for i in ix])
+            # Generate random starting indices for each sequence in the batch
+            ix = torch.randint(len(data) - self.context_size-1, (self.batch_size,))
+            
+            # Create input sequences (x) and target sequences (y)
+            x = torch.stack([torch.from_numpy(data[i:i+self.context_size].astype(np.int64)) for i in ix])
+            y = torch.stack([torch.from_numpy(data[i+1:i+1+self.context_size].astype(np.int64)) for i in ix])
 
-        # Move tensors to the correct device
-        if self.device == 'cuda':
-            return x.pin_memory().to(self.device, non_blocking=True), y.pin_memory().to(self.device, non_blocking=True)
-        else:
+            # Move tensors to the correct device
+            if self.device == 'cuda':
+                return x.pin_memory().to(self.device, non_blocking=True), y.pin_memory().to(self.device, non_blocking=True)
+            else:
+                return x.to(self.device), y.to(self.device)
+        elif split == 'test':
+            dataset = self.test_dataset
+            ix = torch.randint(len(dataset), 1)
+            example = dataset[i.item()]
+            input_ids = example['input_ids']
+            x = torch.stack([input_ids[0:context_size//2]])
+            y = torch.stack([input_ids[context_size//2:context_size]])
             return x.to(self.device), y.to(self.device)
+        
+        return ValueError(f"Invalid split: {split}")
