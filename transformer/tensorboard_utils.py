@@ -63,7 +63,12 @@ class TensorBoardLogger:
             tag_scalar_dict (dict): A dictionary of tags to scalar values (e.g., {'train': 0.1, 'val': 0.2}).
             step (int): The global step/iteration to associate with the log.
         """
-        self.writer.add_scalars(main_tag, tag_scalar_dict, step)
+        # Ensure all values are python floats/ints, not tensors.
+        clean_tag_scalar_dict = {
+            tag: value.item() if hasattr(value, 'item') else value
+            for tag, value in tag_scalar_dict.items()
+        }
+        self.writer.add_scalars(main_tag, clean_tag_scalar_dict, step)
 
     def log_hparams(self, hparams: dict, metrics: dict):
         """

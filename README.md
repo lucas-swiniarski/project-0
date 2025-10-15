@@ -19,6 +19,13 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     conda install -c conda-forge datasets tokenizers tensorboard
     ```
 
+3. **Start tensorboard:**
+    Change logdir to your model ckpt_dir/tensorboard
+    ```bash
+    screen
+    tensorboard --logdir /home/lucas/project-0/checkpoints/25_10_15_pt_sft1/tensorboard/ --port 6006
+    ```
+
 ## Pre-training
 
 1.  **Download the dataset:**

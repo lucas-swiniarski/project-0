@@ -47,7 +47,7 @@ eval_batches = 20 # Reduced to speed up eval loop
 learning_rate = 3e-4 # Max learning rate
 warmup_iters = 500
 lr_decay_iters = max_iters # Should be >= max_iters
-min_lr = 0 # Final learning rate
+min_lr = 1e-6 # Final learning rate
 
 grad_clip = 1.0 # Clip gradients at this value
 
@@ -160,7 +160,7 @@ def main():
                 generated_text = model_utils.generate_text(
                     model, tokenizer, data_loader, context_size, stop_token=stop_token_id, **gen_params)
                 logger.log_text('Generations/sample', generated_text, step)
-                losses = model_utils.estimate_loss(model, data_loader, eval_batches, mask=None)
+                losses = model_utils.estimate_loss(model, data_loader, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 logger.log_scalars('Loss/eval', {'train': losses['train'], 'val': losses['val']}, step)
                 

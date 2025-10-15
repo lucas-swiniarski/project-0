@@ -48,7 +48,7 @@ def sample_next_token(logits: torch.Tensor,
     return next_idx, log_prob.cpu()
 
 @torch.no_grad()
-def estimate_loss(model: 'MyTransformer', data_loader: 'DataLoader', eval_batches: int) -> dict[str, torch.Tensor]:
+def estimate_loss(model: 'MyTransformer', data_loader: 'DataLoader', eval_batches: int) -> dict[str, float]:
     out = {}
     model.eval()
     for split in ['train', 'val']:
@@ -59,7 +59,7 @@ def estimate_loss(model: 'MyTransformer', data_loader: 'DataLoader', eval_batche
             mask = torch.tril(torch.ones(T, T, device=X.device))
             logits, loss, _ = model(X, Y, mask=mask)
             losses[k] = loss.item()
-        out[split] = losses.mean()
+        out[split] = losses.mean().item()
     model.train()
     return out
 
