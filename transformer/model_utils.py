@@ -69,9 +69,11 @@ def generate_text(model: 'MyTransformer',
                   data_loader: 'DataLoader',
                   context_size: int,
                   max_new_tokens: int,
-                  top_k: int,
-                  top_p: float,
-                  temperature: float, also_no_cache_decode: bool = False):
+                  stop_token: int | None = None,
+                  top_k: int = 64,
+                  top_p: float = 0.9,
+                  temperature: float = 1.0, 
+                  also_no_cache_decode: bool = False) -> str:
     # Save the current RNG state to isolate generation from training randomness
     rng_state = torch.get_rng_state()
     model.eval()
@@ -84,10 +86,12 @@ def generate_text(model: 'MyTransformer',
     print("\n--- Generating Text (with cache) ---")
     start_time = time.time()
     generated_tokens_cached, log_probs_cached = model.generate(X, 
-                                                               max_new_tokens=max_new_tokens, 
+                                                               max_new_tokens=max_new_tokens,
+                                                               stop_token=stop_token,
                                                                top_k=top_k, 
-                                                               top_p=top_p, 
-                                                               temperature=temperature, use_cache=True)
+                                                               top_p=top_p,
+                                                               temperature=temperature,
+                                                               use_cache=True)
     duration_cached = time.time() - start_time
 
     context_len = X.shape[1]
@@ -98,10 +102,19 @@ def generate_text(model: 'MyTransformer',
     print(f"  Generated: '{generated_text_cached}'")
     print(f'Time to generate: {duration_cached:.4f}s')
 
+    # Format for logging
+    log_text = f"**Context:**\n\n```\n{context_text}\n```\n\n**Generated:**\n\n```\n{generated_text_cached}\n```"
+
     if also_no_cache_decode:
         print("\n--- Comparing with non-cached generation ---")
         start_time = time.time()
-        generated_tokens, log_probs = model.generate(X, max_new_tokens=max_new_tokens, top_k=top_k, top_p=top_p, temperature=temperature, use_cache=False)
+        generated_tokens, log_probs = model.generate(X, 
+                                                     max_new_tokens=max_new_tokens,
+                                                     stop_token=stop_token,
+                                                     top_k=top_k, 
+                                                     top_p=top_p, 
+                                                     temperature=temperature,
+                                                     use_cache=False)
         duration = time.time() - start_time
         
         generated_text = tokenizer.decode(generated_tokens[0, context_len:].tolist(), skip_special_tokens=False)
@@ -113,6 +126,7 @@ def generate_text(model: 'MyTransformer',
     # Restore the original RNG state
     torch.set_rng_state(rng_state)
     model.train()
+    return log_text
 
 def expand_model_vocabulary(state_dict, old_vocab_size, new_vocab_size):
     """

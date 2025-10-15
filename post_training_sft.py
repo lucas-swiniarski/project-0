@@ -3,7 +3,9 @@ from tqdm import tqdm
 from torch.amp.grad_scaler import GradScaler
 import tokenizer.profiles as tokenizer_profiles
 from transformer.model import MyTransformer, TrainingMode
+import math
 from transformer import model_utils
+from transformer.tensorboard_utils import TensorBoardLogger
 from tokenizers import Tokenizer
 from dataset.post_training.sft.data_loader import DataLoader
 import os
@@ -23,7 +25,7 @@ sft_config = {
 }
 
 gen_params = {
-    'max_new_tokens': 128,
+    'max_new_tokens': 256,
     'top_k': 64,
     'top_p': 0.9,
     'temperature': 1.0
@@ -38,18 +40,42 @@ tokenized_data_dir = '/home/lucas/data/v1/tokenized/post_training/sft'
 
 # Optimization hyperparametrs
 max_iters = 6000
-eval_interval = 50
-eval_batches = 50
-learning_rate = 1e-4 # Usually lower for fine-tuning
+eval_interval = 500
+eval_batches = 20 # Reduced to speed up eval loop
+
+# Learning rate schedule
+learning_rate = 3e-4 # Max learning rate
+warmup_iters = 500
+lr_decay_iters = max_iters # Should be >= max_iters
+min_lr = 0 # Final learning rate
+
+grad_clip = 1.0 # Clip gradients at this value
 
 # Checkpointing
-checkpoint_dir = '/home/lucas/project-0/checkpoints/25_10_11_pt_sft1/'
+checkpoint_dir = '/home/lucas/project-0/checkpoints/25_10_15_pt_sft1/'
+
+def get_lr(it: int) -> float:
+    """Calculates the learning rate for a given iteration."""
+    # 1) linear warmup for warmup_iters steps
+    if it < warmup_iters:
+        return learning_rate * it / warmup_iters
+    # 2) if it > lr_decay_iters, return min learning rate
+    if it > lr_decay_iters:
+        return min_lr
+    # 3) in between, use cosine decay down to min learning rate
+    decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
+    return min_lr + coeff * (learning_rate - min_lr)
 
 def main():
     """
     Main function to run Supervised Fine-Tuning (SFT) on the MyTransformer model.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
+    tensorboard_log_dir = os.path.join(checkpoint_dir, 'tensorboard')
+    logger = TensorBoardLogger(log_dir=tensorboard_log_dir)
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
@@ -58,8 +84,10 @@ def main():
     tokenizer_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[tokenizer_profile_name]()
     tokenizer = tokenizer_profile.configure_tokenizer(tokenizer)
     new_vocab_size = tokenizer.get_vocab_size()
-    pad_token_id = tokenizer.token_to_id("[PAD]")
-    assert pad_token_id is not None, "[PAD] token not found in tokenizer"
+    pad_token_id = tokenizer.token_to_id(tokenizer_profile.get_pad_token())
+    stop_token_id = tokenizer.token_to_id(tokenizer_profile.get_stop_token())
+    assert pad_token_id is not None, "pad token not found in tokenizer"
+    assert stop_token_id is not None, "stop token not found in tokenizer"
     
     # Set a seed for reproducibility
     torch.manual_seed(0)
@@ -115,6 +143,7 @@ def main():
     scaler = GradScaler(enabled=(device == 'cuda'))
     
     # Create the causal attention mask once outside the loop
+    mask = torch.tril(torch.ones(context_size, context_size, device=device))
     # The SFT dataloader uses padding, so we don't need a static mask here.
     # The model's forward pass should handle creating the mask from padding tokens.
     # For now, we pass None and rely on the dataloader's truncation.
@@ -122,10 +151,18 @@ def main():
     
     with tqdm(range(max_iters), desc="Training", unit="step", ncols=120) as pbar:
         for step in pbar:
+            # determine and set the learning rate for this iteration
+            lr = get_lr(step)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+
             if step > 0 and (step % eval_interval == 0 or step == max_iters - 1):
-                model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
-                losses = model_utils.estimate_loss(model, data_loader, eval_batches)
+                generated_text = model_utils.generate_text(
+                    model, tokenizer, data_loader, context_size, stop_token=stop_token_id, **gen_params)
+                logger.log_text('Generations/sample', generated_text, step)
+                losses = model_utils.estimate_loss(model, data_loader, eval_batches, mask=None)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                logger.log_scalars('Loss/eval', {'train': losses['train'], 'val': losses['val']}, step)
                 
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
                 print(f"Saving checkpoint to {checkpoint_path}")
@@ -138,14 +175,25 @@ def main():
             x, y = data_loader.get_batch('train')
             
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=(device == 'cuda')):
-                logits, loss, _ = model(x, y) # Mask is not needed as SFT data is padded to context_size
+                logits, loss, _ = model(x, y, mask) # Mask is not needed as SFT data is padded to context_size
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
+            # Unscale gradients before clipping to get the correct norm
+            scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            
             scaler.step(optimizer)
             scaler.update()
 
             pbar.set_postfix(loss=f"{loss.item():.4f}")
+            
+            # Log metrics to TensorBoard
+            logger.log_scalar('Loss/train', loss.item(), step)
+            logger.log_scalar('LearningRate', optimizer.param_groups[0]['lr'], step)
+            logger.log_scalar('Gradients/norm', grad_norm.item(), step)
+
+    logger.close()
 
 if __name__ == "__main__":
     main()

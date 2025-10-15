@@ -150,15 +150,17 @@ class MyTransformer(nn.Module):
     def generate(self, 
                  idx: torch.Tensor, 
                  max_new_tokens: int, 
+                 stop_token: int | None = None,
                  top_k: int = 0, 
                  top_p: float = 0.0, 
-                 temperature: float = 1.0, 
+                 temperature: float = 1.0,
                  use_cache: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
         """Generates max_new_tokens from an input sentence idx.
         
         Args:
             idx (torch.Tensor): The initial context, shape (B, T).
             max_new_tokens (int): The maximum number of new tokens to generate.
+            stop_token (int): The token to stop generation at. None = no stopping until max_new_tokens.
             temperature (float, optional): Controls randomness. Higher values ( > 1.0) make output more random,
                                            lower values ( < 1.0) make it more deterministic. Defaults to 1.0.
             top_k (int, optional): If set, samples from the `k` most likely next tokens. Defaults to None.
@@ -180,7 +182,12 @@ class MyTransformer(nn.Module):
 
         def sampling_handler(logits, decode_step):
             next_token, log_prob = sample_next_token(logits, top_k, top_p, temperature)
-            return next_token, log_prob, decode_step < n_to_gen - 1
+            
+            # Continue if we haven't reached the desired number of tokens AND
+            # (the stop token is not defined OR the generated token is not the stop token)
+            should_continue = (decode_step < n_to_gen - 1) and \
+                              (stop_token is None or not torch.all(next_token == stop_token))
+            return next_token, log_prob, should_continue
 
         return self._autoregressive_loop(idx, use_cache, sampling_handler)
 

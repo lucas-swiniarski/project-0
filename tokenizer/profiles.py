@@ -22,6 +22,20 @@ class TokenizerProfile(ABC):
         pass
     
     @abstractmethod
+    def get_pad_token(self) -> str:
+        """
+        Returns the pad token.
+        """
+        pass
+    
+    @abstractmethod
+    def get_stop_token(self) -> str:
+        """
+        Returns the stop token.
+        """
+        pass
+    
+    @abstractmethod
     def create_tokenizer(self) -> Tokenizer:
         """
         Init a tokenizer.
@@ -67,6 +81,12 @@ class PreTrainingV1(TokenizerProfile):
     
     def get_special_tokens(self) -> List[str]:
         return ["[UNK]", "[PAD]", "[SOS]", "[EOS]"]
+    
+    def get_pad_token(self):
+        return "[PAD]"
+    
+    def get_stop_token(self):
+        return "[EOS]"
     
     def create_tokenizer(self) -> Tokenizer:
         tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
@@ -122,8 +142,14 @@ class PostTrainingV1(TokenizerProfile):
     """
 
     def get_special_tokens(self) -> List[str]:
-        return PreTrainingV1().get_special_tokens() + ["<SYSTEM>", "</SYSTEM>", "<USER>", "</USER>", "<MODEL>", "</MODEL>", "<PAD>"]
-        
+        return PreTrainingV1().get_special_tokens() + ["<SYSTEM>", "</SYSTEM>", "<USER>", "</USER>", "<MODEL>", "</MODEL>"]
+    
+    def get_pad_token(self):
+        return "[PAD]"
+    
+    def get_stop_token(self):
+        return "</MODEL>"
+    
     def create_tokenizer(self) -> Tokenizer:
         # Backward compatibility.
         return PreTrainingV1().create_tokenizer()  
@@ -189,7 +215,6 @@ class PostTrainingV1(TokenizerProfile):
             return {"input_ids": input_ids, "labels": labels}
 
         raise ValueError(f"Unknown mode: {mode}")
-
 
     def configure_tokenizer(self, tokenizer: Tokenizer) -> Tokenizer:
         original_vocab_size = tokenizer.get_vocab_size()        

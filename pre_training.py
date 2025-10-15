@@ -111,7 +111,7 @@ def main():
     with tqdm(range(max_iters), desc="Training", unit="step", ncols=120) as pbar:
         for step in pbar:
             if step % eval_interval == 0 or step == max_iters - 1:
-                model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
+                generated_text = model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
                 losses = model_utils.estimate_loss(model, data_loader, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 

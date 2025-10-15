@@ -16,7 +16,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     This will install PyTorch with CUDA support, Hugging Face Datasets, and Tokenizers.
     ```bash
     conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
-    conda install -c conda-forge datasets tokenizers
+    conda install -c conda-forge datasets tokenizers tensorboard
     ```
 
 ## Pre-training
