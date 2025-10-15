@@ -1,5 +1,8 @@
 # Bazel
 /bazel-*
+
+# Checkpoints
+checkpoints/
 *.pt
 
 # Bazel Bzlmod
