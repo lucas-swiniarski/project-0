@@ -56,7 +56,7 @@ class TestMyTransformer(unittest.TestCase):
 
     def test_score_cache_vs_no_cache_consistency(self):
         """
-        Tests that model.score() with and without caching produce the same log probabilities.
+        Tests that model.autoregressive_score() with and without caching produce the same log probabilities.
         """
         # 1. Setup a small model for fast testing
         device = 'cpu'
@@ -81,14 +81,14 @@ class TestMyTransformer(unittest.TestCase):
         completion = torch.randint(0, model_config['vocab_size'], (batch_size, completion_length), device=device)
 
         # 3. Score the completion without using the KV cache
-        _, log_probs_no_cache = model.score(
+        _, log_probs_no_cache = model.autoregressive_score(
             prompt=context,
             completion=completion,
             use_cache=False
         )
 
         # 4. Score the completion using the KV cache
-        _, log_probs_with_cache = model.score(
+        _, log_probs_with_cache = model.autoregressive_score(
             prompt=context,
             completion=completion,
             use_cache=True
@@ -99,7 +99,7 @@ class TestMyTransformer(unittest.TestCase):
             torch.allclose(log_probs_no_cache, log_probs_with_cache, atol=1e-6),
             "Log probabilities from scoring with and without cache should be identical."
         )
-        print("[TEST PASSED] `score()` with and without cache produce identical log probabilities.")
+        print("[TEST PASSED] `autoregressive_score()` with and without cache produce identical log probabilities.")
 
     def test_generate_stops_at_stop_token(self):
         """

@@ -66,16 +66,29 @@ def main():
             token_ids = tokenized_dataset[index]['input_ids']
             print(f"\n[Tokenized Data]:\n{tokenized_dataset[index]}")
 
-            decoded_text = tokenizer.decode(token_ids)
-            print(f"\n[Decoded Text (Clean)]:\n'{decoded_text}'")
+            if type(token_ids[0]) == list: 
+                for i, ids in enumerate(token_ids):
+                    decoded_text = tokenizer.decode(ids)
+                    print(f"\n[Decoded Text (Clean) {i}]:\n'{decoded_text}'")
 
-            decoded_with_special = tokenizer.decode(token_ids, skip_special_tokens=False)
-            print(f"\n[Decoded Text (with special tokens)]:\n'{decoded_with_special}'")
-            print("\n" + "="*55)
-            
-            tokens = [tokenizer.id_to_token(id) for id in token_ids]
-            print(f"\n[Tokens (decoded one-by-one)]:\n{tokens}")
-            print("\n" + "="*55)
+                    decoded_with_special = tokenizer.decode(ids, skip_special_tokens=False)
+                    print(f"\n[Decoded Text (with special tokens) {i}]:\n'{decoded_with_special}'")
+                    print("\n" + "="*55)
+                    
+                    tokens = [tokenizer.id_to_token(id) for id in ids]
+                    print(f"\n[Tokens (decoded one-by-one) {i}]:\n{tokens}")
+                    print("\n" + "="*55)
+            else:
+                decoded_text = tokenizer.decode(token_ids)
+                print(f"\n[Decoded Text (Clean)]:\n'{decoded_text}'")
+
+                decoded_with_special = tokenizer.decode(token_ids, skip_special_tokens=False)
+                print(f"\n[Decoded Text (with special tokens)]:\n'{decoded_with_special}'")
+                print("\n" + "="*55)
+                
+                tokens = [tokenizer.id_to_token(id) for id in token_ids]
+                print(f"\n[Tokens (decoded one-by-one)]:\n{tokens}")
+                print("\n" + "="*55)
             
         except ValueError:
             print("Invalid input. Please enter an integer index or 'q'.")

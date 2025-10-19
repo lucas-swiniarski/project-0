@@ -1,4 +1,6 @@
+import copy
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 from torch.amp.grad_scaler import GradScaler
 import tokenizer.profiles as tokenizer_profiles
@@ -7,16 +9,16 @@ import math
 from transformer import model_utils
 from transformer.tensorboard_utils import TensorBoardLogger
 from tokenizers import Tokenizer
-from dataset.post_training.sft.data_loader import DataLoader
+from dataset.post_training.rl.data_loader import DataLoader
 import os
 import versioned_model_configs
 
-# Path to a pre-trained model for SFT. This is required.
-base_model_path = '/home/lucas/project-0/checkpoints/25_10_11_model/model_step_24999.pt'
-model_config = versioned_model_configs.pre_training_25_10_11_mode_config # Configuration of base_model_path.
+# Path to a pre-trained model for RL. This is required.
+base_model_path = '/home/lucas/project-0/checkpoints/25_10_15_pt_sft1/model_step_5999.pt'
+model_config = versioned_model_configs.post_training_25_10_15_mode_config # Configuration of base_model_path.
 
-# SFT specific configuration overrides
-sft_config = {
+# RL specific configuration overrides
+rl_config = {
     'dropout_rate': 0.2,
     # If lora_rank > 0, train a lora adapter (usually on a pre-trained model).
     'lora_rank': 0,
@@ -31,24 +33,26 @@ gen_params = {
     'temperature': 1.0
 }
 
+# Loss params
+beta_dpo = 1.0
+
 # Data parameters
-batch_size = 16 # SFT batches with padding can take more memory
+batch_size = 2 # RL batches with padding can take more memory
 context_size = model_config['context_size']
 tokenizer_path = '/home/lucas/tokenizer/v1/tokenizer.json'
 tokenizer_profile_name = 'post_training_v1'
-tokenized_data_dir = '/home/lucas/data/v1/tokenized/post_training/sft'
+tokenized_data_dir = '/home/lucas/data/v1/tokenized/post_training/rl'
 
-# Optimization hyperparametrs
+# Iterations params
 max_iters = 6000
 eval_interval = 500
 eval_batches = 20 # Reduced to speed up eval loop
 
-# Learning rate schedule
+# Optimizer params.
 learning_rate = 3e-4 # Max learning rate
 warmup_iters = 500
 lr_decay_iters = max_iters # Should be >= max_iters
 min_lr = 1e-6 # Final learning rate
-
 grad_clip = 1.0 # Clip gradients at this value
 
 # Checkpointing
@@ -70,7 +74,7 @@ def get_lr(it: int) -> float:
 
 def main():
     """
-    Main function to run Supervised Fine-Tuning (SFT) on the MyTransformer model.
+    Main function to run DPO on MyTransformer model.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
     tensorboard_log_dir = os.path.join(checkpoint_dir, 'tensorboard')
@@ -90,12 +94,12 @@ def main():
     assert stop_token_id is not None, "stop token not found in tokenizer"
     
     # Set a seed for reproducibility
-    torch.manual_seed(0)
+    torch.manual_seed(1)
 
     # --- Model Loading and Configuration ---
-    print(f"Loading pre-trained model from {base_model_path}")
+    print(f"Loading model from {base_model_path}")
     if not os.path.exists(base_model_path):
-        raise FileNotFoundError(f"Base model not found at {base_model_path}. SFT requires a pre-trained model.")
+        raise FileNotFoundError(f"Base model not found at {base_model_path}. RL requires a pre-trained model.")
 
     state_dict = torch.load(base_model_path, map_location=device)
     model_config = versioned_model_configs.pre_training_25_10_11_mode_config
@@ -108,14 +112,14 @@ def main():
     old_vocab_size = model_config['vocab_size']
     state_dict = model_utils.expand_model_vocabulary(state_dict, old_vocab_size, new_vocab_size)
 
-    # Update config with new vocab size and SFT-specific overrides
+    # Update config with new vocab size and RL-specific overrides
     model_config['vocab_size'] = new_vocab_size
-    model_config.update(sft_config)
+    model_config.update(rl_config)
 
     print("Initializing transformer with loaded configuration...")
-    model = MyTransformer(**model_config).to(device)
+    pi_theta = MyTransformer(**model_config).to(device)
     
-    incompatible_keys = model.load_state_dict(state_dict, strict=False)
+    incompatible_keys = pi_theta.load_state_dict(state_dict, strict=False)
     if incompatible_keys.missing_keys:
         print("Warning: The following keys were not found in the checkpoint and will be randomly initialized:")
         print(f"  {incompatible_keys.missing_keys}")
@@ -125,14 +129,18 @@ def main():
 
     print("Model instantiated successfully.")
     print(f"Vocabulary size: {model_config['vocab_size']}")
-    print(f"{sum(p.numel() for p in model.parameters())/1e6:.2f}M total parameters.")
+    print(f"{sum(p.numel() for p in pi_theta.parameters())/1e6:.2f}M total parameters.")
+    
+    print("Copying pi_theta for pi_ref.")
+    pi_ref = copy.deepcopy(pi_theta)
     
     # --- Set Training Mode and Optimizer ---
     train_mode = TrainingMode.LORA if model_config['lora_rank'] > 0 else TrainingMode.TRAIN
-    model.set_train_mode(train_mode)
-
+    pi_theta.set_train_mode(train_mode)
+    pi_ref.set_train_mode(TrainingMode.EVAL)
+   
     # Create optimizer for trainable parameters only
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    trainable_params = [p for p in pi_theta.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate)
 
     print("Loading data...")
@@ -156,7 +164,7 @@ def main():
                 generated_text = model_utils.generate_text(
                     model, tokenizer, data_loader, context_size, stop_token=stop_token_id, **gen_params)
                 logger.log_text('Generations/sample', generated_text, step)
-                losses = model_utils.estimate_cross_entropy_loss(model, data_loader, eval_batches)
+                losses = model_utils.estimate_dpo_loss(model, data_loader, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 logger.log_scalars('Loss/eval', {'train': losses['train'], 'val': losses['val']}, step)
                 
@@ -164,20 +172,29 @@ def main():
                 print(f"Saving checkpoint to {checkpoint_path}")
                 checkpoint = {
                     'model_config': model_config,
-                    'model_state_dict': model.state_dict(),
+                    'model_state_dict': pi_theta.state_dict(),
                 }
                 torch.save(checkpoint, checkpoint_path)
             
-            x, y = data_loader.get_batch('train')
-            
+            (x_w, y_w), (x_l, y_l) = data_loader.get_batch('train')                        
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=(device == 'cuda')):
-                logits, loss, _ = model(x, y, mask) # Mask is not needed as SFT data is padded to context_size
+                _, nll_theta_w, _ = pi_theta(x_w, y_w, mask, reduction='sum')
+                _, nll_theta_l, _ = pi_theta(x_l, y_l, mask, reduction='sum')
+                _, nll_ref_w, _ = pi_ref(x_w, y_w, mask, reduction='sum')
+                _, nll_ref_l, _ = pi_ref(x_l, y_l, mask, reduction='sum')
+                
+                loss = - torch.log(
+                    F.sigmoid(
+                        beta_dpo * ((nll_ref_w - nll_theta_w) - (nll_ref_l - nll_theta_l))
+                    )
+                )
+
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             # Unscale gradients before clipping to get the correct norm
             scaler.unscale_(optimizer)
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            grad_norm = torch.nn.utils.clip_grad_norm_(pi_theta.parameters(), grad_clip)
             
             scaler.step(optimizer)
             scaler.update()
@@ -188,6 +205,12 @@ def main():
             logger.log_scalar('Loss/train', loss.item(), step)
             logger.log_scalar('LearningRate', optimizer.param_groups[0]['lr'], step)
             logger.log_scalar('Gradients/norm', grad_norm.item(), step)
+            logger.log_scalars('NLL', {
+                'theta_w': nll_theta_w.item(),
+                'ref_w': nll_ref_w.item(),
+                'theta_l': nll_theta_l.item(),
+                'ref_l': nll_ref_l.item(),
+            }, step)
 
     logger.close()
 

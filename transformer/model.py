@@ -8,9 +8,9 @@ from enum import Enum
 from .model_utils import sample_next_token
 
 class TrainingMode(Enum):
-    SFT = 'sft'
-    LORA = 'lora'
-    EVAL = 'eval'
+    TRAIN = 'train' # All params change
+    LORA = 'lora' # Only LoRA params change.
+    EVAL = 'eval' # No grad.
 
 class MyTransformer(nn.Module):
     """
@@ -43,7 +43,7 @@ class MyTransformer(nn.Module):
         ])
         self.ln = nn.LayerNorm(d_model)
         self.W_o = nn.Linear(d_model, vocab_size)
-        self.mode = TrainingMode.SFT # Default to SFT
+        self.mode = TrainingMode.TRAIN # Default to all params learning.
 
         # Initialize weights
         self.apply(self._init_weights)
@@ -62,6 +62,7 @@ class MyTransformer(nn.Module):
                 mask: torch.Tensor | None = None,
                 pos: torch.Tensor | None = None,
                 keys_values: list[tuple[torch.Tensor]] | None = None,
+                reduction: str = 'mean'
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         """Transformer forward pass.
         
@@ -97,7 +98,7 @@ class MyTransformer(nn.Module):
             B, T, C = logits.shape
             logits = logits.view(B*T, C)
             targets = targets.view(B*T)
-            loss = F.cross_entropy(logits, targets)
+            loss = F.cross_entropy(logits, targets, reduction=reduction)
 
         return logits, loss, new_keys_values
         
@@ -191,10 +192,11 @@ class MyTransformer(nn.Module):
 
         return self._autoregressive_loop(idx, use_cache, sampling_handler)
 
-    def score(self, 
+    def autoregressive_score(self, 
               prompt: torch.Tensor, 
               completion: torch.Tensor, 
               use_cache: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
+        # This function is intended to be used ONLY to test that autoregressive decoding works.
         B, T_comp = completion.shape
         
         def scoring_handler(logits, decode_step):
@@ -222,7 +224,7 @@ class MyTransformer(nn.Module):
         """
         self.train()
         self.mode = mode
-        if mode == TrainingMode.SFT:
+        if mode == TrainingMode.TRAIN:
             print("Setting mode to SFT. All parameters are trainable.")
             for param in self.parameters():
                 param.requires_grad = True

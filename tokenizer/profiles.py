@@ -165,6 +165,20 @@ class PostTrainingV1(TokenizerProfile):
             prompt = f"{system_prompt}{user_prompt}<MODEL>"
             completion = f"{example['output']}</MODEL>"
             return {"prompt": prompt, "completion": completion}
+        elif mode == 'openassistant':
+            prompt = ''
+            for context in example['context']:
+                if context['role'] == 'prompter':
+                    prompt += f"<USER>{context['text']}</USER>"
+                elif context['role'] == 'assistant':
+                    prompt += f"<MODEL>{context['text']}</MODEL>"
+                else:
+                    raise ValueError(f"Unknown role: {context['role']}")
+            prompt += '<MODEL>'
+            accepted_completion = f"{example['accepted']['text']}</MODEL>"
+            rejected_completion = f"{example['rejected']['text']}</MODEL>"
+            return {"prompt": prompt, "accepted": accepted_completion, "rejected": rejected_completion}
+            
 
         raise ValueError(f"Unknown mode: {mode}")
     
@@ -174,6 +188,9 @@ class PostTrainingV1(TokenizerProfile):
             return PreTrainingV1().tokenized_columns_to_remove(mode)
         elif mode == 'post_training_sft':
             return ["prompt", "completion"]
+        elif mode == 'post_training_rl':
+            return ["prompts", "accepted", "rejected"]
+        raise ValueError(f'Mode: {mode} not supported.')
 
     def tokenize_datasets(self, 
                           examples: Dict[str, List], 
@@ -213,6 +230,39 @@ class PostTrainingV1(TokenizerProfile):
                 labels.append(full_labels[1:])
 
             return {"input_ids": input_ids, "labels": labels}
+        elif mode == 'post_training_rl':
+            # examples: {'prompts': prompts, 'accepted': accepted_responses, 'rejected': rejected_responses}
+            prompts = examples['prompts']
+            accepted_responses = examples['accepted']
+            rejected_responses = examples['rejected']
+            
+            tokenized_prompts = tokenizer.encode_batch(prompts)
+            tokenized_accepted_responses = tokenizer.encode_batch(accepted_responses)
+            tokenized_rejected_responses = tokenizer.encode_batch(rejected_responses)
+            
+            input_ids = []
+            labels = []
+            rewards = []
+            
+            for prompts_encoding, accepted_encoding, rejected_encoding in zip(
+                tokenized_prompts, 
+                tokenized_accepted_responses, 
+                tokenized_rejected_responses):
+                prompt_ids = prompts_encoding.ids
+                accepted_ids = accepted_encoding.ids
+                rejected_ids = rejected_encoding.ids
+
+                full_accepted_ids = prompt_ids + accepted_ids
+                full_rejected_ids = prompt_ids + rejected_ids
+                
+                full_accepted_labels = [-100] * len(prompt_ids) + accepted_ids
+                full_rejected_labels = [-100] * len(prompt_ids) + rejected_ids
+                
+                input_ids.append([full_accepted_ids[:-1], full_rejected_ids[:-1]])
+                labels.append([full_accepted_labels[1:], full_rejected_labels[1:]])
+                rewards.append([1.0, -1.0])
+            
+            return {"input_ids": input_ids, "labels": labels, "rewards": rewards}
 
         raise ValueError(f"Unknown mode: {mode}")
 

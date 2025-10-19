@@ -117,6 +117,39 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 
 ## Post-training - DPO
 
+1.  **Download the dataset:**
+    This script will download the Openassistant cleaned datasets, process them, and save them to the specified directory.
+    ```bash
+    python3 -m dataset.post_training.rl.download_dataset --output-dir=/home/lucas/data/v1/raw/post_training/rl --tokenizer-profile=post_training_v1 --num-test-roots=500
+    ```
+
+2.  **Tokenize the datasets:**
+    This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
+    You can adjust the number of processes with the `--num-proc` flag.
+    ```bash
+    python3 -m tokenizer.tokenize_dataset \
+        --dataset-dir /home/lucas/data/v1/raw/post_training/rl \
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
+        --output-dir /home/lucas/data/v1/tokenized/post_training/rl \
+        --tokenizer-profile=post_training_v1 \
+        --tokenizer-mode=post_training_rl \
+        --num-proc 4
+    ```
+
+3.  **Inspect the tokenized data (Optional):**
+    ```bash
+    python3 -m tokenizer.inspect_tokenized_data \
+        --raw-dataset-dir /home/lucas/data/v1/raw/post_training/rl/train \
+        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/post_training/rl/train \
+        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
+    ```
+
+     This script counts the total number of tokens in the train, validation, and test sets after tokenization.
+    ```bash
+    python3 -m tokenizer.count_tokenized_data \
+        --tokenized-dir /home/lucas/data/v1/tokenized/post_training/sft
+    ```  
+
 ## Orders of magnitude
 
 1. Training capacity: 1 nvidia L4 - 24 GB vram - 2.42×10^14 FLOPS * 3600 * 24 = 2x10^19 FLOPs (f16)

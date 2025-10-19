@@ -42,13 +42,13 @@ class DataLoader:
     
     def get_batch(self, split):
         """
-        Get a random batch of padded data for training or validation.
+        Get a random batch of padded data for training, validation or test.
         
         In train / validation mode, pad the sequences so they are all of size context_size
         and load batch_size.
 
         In test mode, sequences are trimmed to context_size, but not padded, load batch_size 1
-        because tensors of differnet shape (no padding).
+        because tensors of different shape (no padding).
         """
         data = ''
         if split in ('train', 'val'):

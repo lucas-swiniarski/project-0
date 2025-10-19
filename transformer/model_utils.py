@@ -48,7 +48,10 @@ def sample_next_token(logits: torch.Tensor,
     return next_idx, log_prob.cpu()
 
 @torch.no_grad()
-def estimate_loss(model: 'MyTransformer', data_loader: 'DataLoader', eval_batches: int) -> dict[str, float]:
+def estimate_cross_entropy_loss(
+    model: 'MyTransformer', 
+    data_loader: 'DataLoader', 
+    eval_batches: int) -> dict[str, float]:
     out = {}
     model.eval()
     for split in ['train', 'val']:
@@ -62,6 +65,23 @@ def estimate_loss(model: 'MyTransformer', data_loader: 'DataLoader', eval_batche
         out[split] = losses.mean().item()
     model.train()
     return out
+
+@torch.no_grad()
+def estimate_dpo_loss(
+    pi_theta: 'MyTransformer',
+    pi_ref: 'MyTransformer',
+    data_loader: 'DataLoader', 
+    eval_batches: int) -> dict[str, float]:
+    pass
+
+def dpo_loss(
+    pi_theta: 'MyTransformer',
+    pi_ref: 'MyTransformer',
+    x: torch.Tensor,
+    y: torch.Tensor,
+    r: torch.Tensor
+) -> torch.Tensor:
+    pass
 
 @torch.no_grad()
 def generate_text(model: 'MyTransformer',

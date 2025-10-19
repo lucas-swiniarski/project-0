@@ -88,7 +88,7 @@ def main():
     print(f"{sum(p.numel() for p in model.parameters())/1e6:.2f}M total parameters.")
     
     # --- Set Training Mode and Optimizer ---
-    train_mode = TrainingMode.LORA if model_config['lora_rank'] > 0 else TrainingMode.SFT
+    train_mode = TrainingMode.LORA if model_config['lora_rank'] > 0 else TrainingMode.TRAIN
     model.set_train_mode(train_mode)
 
     # Create optimizer for trainable parameters only
@@ -112,7 +112,7 @@ def main():
         for step in pbar:
             if step % eval_interval == 0 or step == max_iters - 1:
                 generated_text = model_utils.generate_text(model, tokenizer, data_loader, context_size, **gen_params)
-                losses = model_utils.estimate_loss(model, data_loader, eval_batches)
+                losses = model_utils.estimate_cross_entropy_loss(model, data_loader, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 
                 

@@ -15,3 +15,6 @@ pre_training_25_10_11_mode_config = {
     'vocab_size': 32000, # Will be set dynamically from the tokenizer
     'context_size': 512,
 }
+
+post_training_25_10_15_mode_config = pre_training_25_10_11_mode_config
+post_training_25_10_15_mode_config['vocab_size'] = 32006
