@@ -1,5 +1,6 @@
 import copy
 import torch
+import time
 import torch.nn.functional as F
 from tqdm import tqdm
 from torch.amp.grad_scaler import GradScaler
@@ -11,6 +12,13 @@ from transformer.tensorboard_utils import TensorBoardLogger
 from tokenizers import Tokenizer
 from dataset.post_training.rl.data_loader import DataLoader
 import os
+try:
+    import pynvml
+    pynvml_available = True
+except ImportError:
+    print("pynvml not found. GPU stats will not be logged.")
+    pynvml_available = False
+
 import versioned_model_configs
 
 # Path to a pre-trained model for RL. This is required.
@@ -27,17 +35,17 @@ rl_config = {
 }
 
 gen_params = {
-    'max_new_tokens': 256,
+    'max_new_tokens': 512,
     'top_k': 64,
     'top_p': 0.9,
     'temperature': 1.0
 }
 
 # Loss params
-beta_dpo = 1.0
+beta_dpo = 0.1
 
 # Data parameters
-batch_size = 2 # RL batches with padding can take more memory
+batch_size = 32 # RL batches with padding can take more memory
 context_size = model_config['context_size']
 tokenizer_path = '/home/lucas/tokenizer/v1/tokenizer.json'
 tokenizer_profile_name = 'post_training_v1'
@@ -45,18 +53,18 @@ tokenized_data_dir = '/home/lucas/data/v1/tokenized/post_training/rl'
 
 # Iterations params
 max_iters = 6000
-eval_interval = 500
+eval_interval = 200
 eval_batches = 20 # Reduced to speed up eval loop
 
 # Optimizer params.
-learning_rate = 3e-4 # Max learning rate
-warmup_iters = 500
+learning_rate = 1e-6 # Max learning rate
+warmup_iters = 150
 lr_decay_iters = max_iters # Should be >= max_iters
-min_lr = 1e-6 # Final learning rate
+min_lr = 1e-6 # Final learning rate (can be same as max learning rate).
 grad_clip = 1.0 # Clip gradients at this value
 
 # Checkpointing
-checkpoint_dir = '/home/lucas/project-0/checkpoints/25_10_15_pt_sft1/'
+checkpoint_dir = '/home/lucas/project-0/checkpoints/25_10_19_pt_rl1/'
 
 def get_lr(it: int) -> float:
     """Calculates the learning rate for a given iteration."""
@@ -83,6 +91,17 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
+    # --- NVML Initialization for GPU stats ---
+    nvml_handle = None
+    if device == 'cuda' and pynvml_available:
+        try:
+            pynvml.nvmlInit()
+            # Assuming single GPU at index 0
+            nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            print("pynvml initialized for GPU monitoring.")
+        except pynvml.NVMLError as e:
+            print(f"Warning: Failed to initialize pynvml: {e}. GPU stats will not be logged.")
+
     print("Loading tokenizer...")
     tokenizer = Tokenizer.from_file(tokenizer_path)
     tokenizer_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[tokenizer_profile_name]()
@@ -101,12 +120,9 @@ def main():
     if not os.path.exists(base_model_path):
         raise FileNotFoundError(f"Base model not found at {base_model_path}. RL requires a pre-trained model.")
 
-    state_dict = torch.load(base_model_path, map_location=device)
-    model_config = versioned_model_configs.pre_training_25_10_11_mode_config
-    # To change once new models trained
-    # checkpoint = torch.load(base_model_path, map_location=device)
-    # model_config = checkpoint['model_config']
-    # state_dict = checkpoint['model_state_dict']
+    checkpoint = torch.load(base_model_path, map_location=device)
+    model_config = checkpoint['model_config']
+    state_dict = checkpoint['model_state_dict']
         
     # --- Handle Vocabulary Expansion ---
     old_vocab_size = model_config['vocab_size']
@@ -141,7 +157,7 @@ def main():
    
     # Create optimizer for trainable parameters only
     trainable_params = [p for p in pi_theta.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate)
+    optimizer = torch.optim.RMSprop(trainable_params, lr=learning_rate)
 
     print("Loading data...")
     data_loader = DataLoader(tokenized_data_dir, context_size, batch_size, pad_token_id, device)
@@ -153,6 +169,7 @@ def main():
     # Create the causal attention mask once outside the loop
     mask = torch.tril(torch.ones(context_size, context_size, device=device))
     
+    last_time = time.time() # For calculating steps/sec
     with tqdm(range(max_iters), desc="Training", unit="step", ncols=120) as pbar:
         for step in pbar:
             # determine and set the learning rate for this iteration
@@ -162,13 +179,17 @@ def main():
 
             if step > 0 and (step % eval_interval == 0 or step == max_iters - 1):
                 generated_text = model_utils.generate_text(
-                    model, tokenizer, data_loader, context_size, stop_token=stop_token_id, **gen_params)
+                    pi_theta, tokenizer, data_loader, context_size, stop_token=stop_token_id, **gen_params)
                 logger.log_text('Generations/sample', generated_text, step)
-                losses = model_utils.estimate_dpo_loss(model, data_loader, eval_batches)
+                losses, rewards = model_utils.estimate_dpo_loss_reward(pi_theta, pi_ref, mask, data_loader, beta_dpo, eval_batches)
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 logger.log_scalars('Loss/eval', {'train': losses['train'], 'val': losses['val']}, step)
+                logger.log_scalars('Reward/eval', {'train': rewards['train'], 'val': rewards['val']}, step)
                 
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
+                # Ensure all async operations are complete before saving.
+                if device == 'cuda':
+                    torch.cuda.synchronize()
                 print(f"Saving checkpoint to {checkpoint_path}")
                 checkpoint = {
                     'model_config': model_config,
@@ -178,17 +199,7 @@ def main():
             
             (x_w, y_w), (x_l, y_l) = data_loader.get_batch('train')                        
             with torch.autocast(device_type=device, dtype=torch.float16, enabled=(device == 'cuda')):
-                _, nll_theta_w, _ = pi_theta(x_w, y_w, mask, reduction='sum')
-                _, nll_theta_l, _ = pi_theta(x_l, y_l, mask, reduction='sum')
-                _, nll_ref_w, _ = pi_ref(x_w, y_w, mask, reduction='sum')
-                _, nll_ref_l, _ = pi_ref(x_l, y_l, mask, reduction='sum')
-                
-                loss = - torch.log(
-                    F.sigmoid(
-                        beta_dpo * ((nll_ref_w - nll_theta_w) - (nll_ref_l - nll_theta_l))
-                    )
-                )
-
+                loss, reward = model_utils.dpo_loss(pi_theta, pi_ref, x_w, y_w, x_l, y_l, mask, beta_dpo)
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
@@ -199,18 +210,32 @@ def main():
             scaler.step(optimizer)
             scaler.update()
 
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
+            # --- Performance Logging ---
+            current_time = time.time()
+            delta_time = current_time - last_time
+            last_time = current_time
+            steps_per_sec = 1.0 / delta_time if delta_time > 0 else 0
+
+            pbar.set_postfix(loss=f"{loss.item():.4f}", reward=f"{reward.item():.4f}")
             
             # Log metrics to TensorBoard
             logger.log_scalar('Loss/train', loss.item(), step)
-            logger.log_scalar('LearningRate', optimizer.param_groups[0]['lr'], step)
-            logger.log_scalar('Gradients/norm', grad_norm.item(), step)
-            logger.log_scalars('NLL', {
-                'theta_w': nll_theta_w.item(),
-                'ref_w': nll_ref_w.item(),
-                'theta_l': nll_theta_l.item(),
-                'ref_l': nll_ref_l.item(),
-            }, step)
+            logger.log_scalar('Reward/train', reward.item(), step)
+            logger.log_scalar('Optimization/learning_rate', lr, step)
+            logger.log_scalar('Optimization/gradient_norm', grad_norm.item(), step)
+            logger.log_scalar('Optimization/steps_per_sec', steps_per_sec, step)
+
+            if nvml_handle:
+                try:
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
+                    util_info = pynvml.nvmlDeviceGetUtilizationRates(nvml_handle)
+                    logger.log_scalar('GPU/vram_used_gb', mem_info.used / (1024**3), step)
+                    logger.log_scalar('GPU/vram_util_percent', (mem_info.used / mem_info.total) * 100, step)
+                    logger.log_scalar('GPU/util_percent', util_info.gpu, step)
+                except pynvml.NVMLError as e:
+                    # This can happen if the GPU is reset or in a weird state.
+                    # We can just skip logging for this step.
+                    pass
 
     logger.close()
 

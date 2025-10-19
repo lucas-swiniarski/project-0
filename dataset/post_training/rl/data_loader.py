@@ -96,7 +96,7 @@ class DataLoader:
                         input_ids_l_batch.append(torch.tensor(current_input_id, dtype=torch.long))
                         labels_l_batch.append(torch.tensor(current_label, dtype=torch.long))
             elif split == 'test':
-                # For testing, we return the prompt, the accepted completion, and the rejected completion.
+                # For testing, we return the prompt and the accepted completion.
                 # This allows for both generation from the prompt and scoring of the completions.
                 
                 # The raw data has one prompt and two completions (accepted, rejected).
@@ -105,9 +105,7 @@ class DataLoader:
                 
                 accepted_input_ids = input_ids[0]
                 accepted_labels = labels[0]
-                rejected_input_ids = input_ids[1] # Not used, but for clarity
-                rejected_labels = labels[1]
-                
+
                 # Find where the prompt ends in the accepted sequence.
                 # The prompt part has labels of -100.
                 try:
@@ -116,12 +114,10 @@ class DataLoader:
                 except StopIteration: # Should not happen in RL dataset
                     prompt_end_idx = len(accepted_input_ids)
                 
-                prompt = torch.tensor(accepted_input_ids[:prompt_end_idx], dtype=torch.long)
-                accepted_completion = torch.tensor([l for l in accepted_labels if l != -100], dtype=torch.long)
-                rejected_completion = torch.tensor([l for l in rejected_labels if l != -100], dtype=torch.long)
-                
+                prompt = torch.tensor(accepted_input_ids[:prompt_end_idx], dtype=torch.long).view(1, -1)
+                accepted_completion = torch.tensor([l for l in accepted_labels if l != -100], dtype=torch.long).view(1, -1)                
                 # For test, we return the tensors directly without batching/stacking
-                return prompt.to(self.device), accepted_completion.to(self.device), rejected_completion.to(self.device)
+                return prompt.to(self.device), accepted_completion.to(self.device)
 
         x_w, y_w = torch.stack(input_ids_w_batch), torch.stack(labels_w_batch)
         x_l, y_l = torch.stack(input_ids_l_batch), torch.stack(labels_l_batch)

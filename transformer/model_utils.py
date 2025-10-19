@@ -67,21 +67,56 @@ def estimate_cross_entropy_loss(
     return out
 
 @torch.no_grad()
-def estimate_dpo_loss(
+def estimate_dpo_loss_reward(
     pi_theta: 'MyTransformer',
     pi_ref: 'MyTransformer',
-    data_loader: 'DataLoader', 
+    mask: torch.Tensor,
+    data_loader: 'DataLoader',
+    beta: float,
     eval_batches: int) -> dict[str, float]:
-    pass
+    out_losses = {}
+    out_rewards = {}
+    pi_theta.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_batches)
+        rewards = torch.zeros(eval_batches)
+        for k in range(eval_batches):
+            (x_w, y_w), (x_l, y_l) = data_loader.get_batch(split)
+            loss, reward = dpo_loss(pi_theta, pi_ref, x_w, y_w, x_l, y_l, mask, beta)
+            losses[k] = loss.item()
+            rewards[k] = reward.item()
+        out_losses[f'{split}'] = losses.mean().item()
+        out_rewards[f'{split}'] = rewards.mean().item()
+    pi_theta.train()
+    return out_losses, out_rewards
 
 def dpo_loss(
     pi_theta: 'MyTransformer',
     pi_ref: 'MyTransformer',
-    x: torch.Tensor,
-    y: torch.Tensor,
-    r: torch.Tensor
-) -> torch.Tensor:
-    pass
+    x_w:  torch.Tensor, 
+    y_w:  torch.Tensor,
+    x_l:  torch.Tensor, 
+    y_l: torch.Tensor,
+    mask: torch.Tensor,
+    beta: float) -> (torch.Tensor, torch.Tensor):
+    """Compute dpo loss & reward.
+
+    Args:
+        pi_theta (MyTransformer): _description_
+        torch (MyTransformer): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    _, nll_theta_w, _ = pi_theta(x_w, y_w, mask, reduction='none')
+    _, nll_theta_l, _ = pi_theta(x_l, y_l, mask, reduction='none')
+    _, nll_ref_w, _ = pi_ref(x_w, y_w, mask, reduction='none')
+    _, nll_ref_l, _ = pi_ref(x_l, y_l, mask, reduction='none')
+    
+    reward_margin_array = beta * ((nll_ref_w - nll_theta_w) - (nll_ref_l - nll_theta_l))
+    loss = - F.logsigmoid(reward_margin_array).mean()
+    return loss, reward_margin_array.mean()
+
 
 @torch.no_grad()
 def generate_text(model: 'MyTransformer',

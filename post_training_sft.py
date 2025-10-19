@@ -1,4 +1,5 @@
 import torch
+import time
 from tqdm import tqdm
 from torch.amp.grad_scaler import GradScaler
 import tokenizer.profiles as tokenizer_profiles
@@ -9,6 +10,12 @@ from transformer.tensorboard_utils import TensorBoardLogger
 from tokenizers import Tokenizer
 from dataset.post_training.sft.data_loader import DataLoader
 import os
+try:
+    import pynvml
+    pynvml_available = True
+except ImportError:
+    print("pynvml not found. GPU stats will not be logged.")
+    pynvml_available = False
 import versioned_model_configs
 
 # Path to a pre-trained model for SFT. This is required.
@@ -79,6 +86,17 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
+    # --- NVML Initialization for GPU stats ---
+    nvml_handle = None
+    if device == 'cuda' and pynvml_available:
+        try:
+            pynvml.nvmlInit()
+            # Assuming single GPU at index 0
+            nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            print("pynvml initialized for GPU monitoring.")
+        except pynvml.NVMLError as e:
+            print(f"Warning: Failed to initialize pynvml: {e}. GPU stats will not be logged.")
+
     print("Loading tokenizer...")
     tokenizer = Tokenizer.from_file(tokenizer_path)
     tokenizer_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[tokenizer_profile_name]()
@@ -145,6 +163,7 @@ def main():
     # Create the causal attention mask once outside the loop
     mask = torch.tril(torch.ones(context_size, context_size, device=device))
     
+    last_time = time.time() # For calculating steps/sec
     with tqdm(range(max_iters), desc="Training", unit="step", ncols=120) as pbar:
         for step in pbar:
             # determine and set the learning rate for this iteration
@@ -160,6 +179,10 @@ def main():
                 print(f"\nstep {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 logger.log_scalars('Loss/eval', {'train': losses['train'], 'val': losses['val']}, step)
                 
+                # Ensure all async operations are complete before saving.
+                if device == 'cuda':
+                    torch.cuda.synchronize()
+
                 checkpoint_path = os.path.join(checkpoint_dir, f'model_step_{step}.pt')
                 print(f"Saving checkpoint to {checkpoint_path}")
                 checkpoint = {
@@ -182,12 +205,31 @@ def main():
             scaler.step(optimizer)
             scaler.update()
 
+            # --- Performance Logging ---
+            current_time = time.time()
+            delta_time = current_time - last_time
+            last_time = current_time
+            steps_per_sec = 1.0 / delta_time if delta_time > 0 else 0
+
             pbar.set_postfix(loss=f"{loss.item():.4f}")
             
             # Log metrics to TensorBoard
             logger.log_scalar('Loss/train', loss.item(), step)
-            logger.log_scalar('LearningRate', optimizer.param_groups[0]['lr'], step)
-            logger.log_scalar('Gradients/norm', grad_norm.item(), step)
+            logger.log_scalar('Optimization/learning_rate', lr, step)
+            logger.log_scalar('Optimization/gradient_norm', grad_norm.item(), step)
+            logger.log_scalar('Optimization/steps_per_sec', steps_per_sec, step)
+
+            if nvml_handle:
+                try:
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
+                    util_info = pynvml.nvmlDeviceGetUtilizationRates(nvml_handle)
+                    logger.log_scalar('GPU/vram_used_gb', mem_info.used / (1024**3), step)
+                    logger.log_scalar('GPU/vram_util_percent', (mem_info.used / mem_info.total) * 100, step)
+                    logger.log_scalar('GPU/util_percent', util_info.gpu, step)
+                except pynvml.NVMLError as e:
+                    # This can happen if the GPU is reset or in a weird state.
+                    # We can just skip logging for this step.
+                    pass
 
     logger.close()
 

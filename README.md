@@ -16,7 +16,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     This will install PyTorch with CUDA support, Hugging Face Datasets, and Tokenizers.
     ```bash
     conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
-    conda install -c conda-forge datasets tokenizers tensorboard
+    conda install -c conda-forge datasets tokenizers tensorboard pynvml
     ```
 
 3. **Start tensorboard:**
@@ -150,6 +150,12 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
         --tokenized-dir /home/lucas/data/v1/tokenized/post_training/sft
     ```  
 
+4. **Train model:**
+    First change parameters of post_training_rl.py, then run:
+
+    ```bash
+    python3 post_training_rl.py
+    ```
 ## Orders of magnitude
 
 1. Training capacity: 1 nvidia L4 - 24 GB vram - 2.42×10^14 FLOPS * 3600 * 24 = 2x10^19 FLOPs (f16)
