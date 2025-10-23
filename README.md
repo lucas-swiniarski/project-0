@@ -120,7 +120,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 1.  **Download the dataset:**
     This script will download the Openassistant cleaned datasets, process them, and save them to the specified directory.
     ```bash
-    python3 -m dataset.post_training.rl.download_dataset --output-dir=/home/lucas/data/v1/raw/post_training/rl --tokenizer-profile=post_training_v1 --num-test-roots=500
+    python3 -m dataset.post_training.rl.download_openassistant_dataset --output-dir=/home/lucas/data/v1/raw/post_training/rl --tokenizer-profile=post_training_v1 --num-test-roots=500
     ```
 
 2.  **Tokenize the datasets:**

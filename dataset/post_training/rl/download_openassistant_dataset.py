@@ -95,9 +95,9 @@ def main():
 
     # --- Save Datasets to Disk ---
     print(f"Saving processed datasets to {output_dir}...")
-    train_set.save_to_disk(os.path.join(output_dir, 'train'))
-    validation_set.save_to_disk(os.path.join(output_dir, 'validation'))
-    test_set.save_to_disk(os.path.join(output_dir, 'test'))
+    train_set.save_to_disk(os.path.join(output_dir, 'train/openassistant'))
+    validation_set.save_to_disk(os.path.join(output_dir, 'validation/openassistant'))
+    test_set.save_to_disk(os.path.join(output_dir, 'test/openassistant'))
 
     print("Dataset processing and saving complete.")
     print(f"Train examples: {len(train_set)}, Validation examples: {len(validation_set)}, Test examples: {len(test_set)}")
