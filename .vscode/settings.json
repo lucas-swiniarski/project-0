@@ -1,0 +1,23 @@
+{
+    // 1. Core setting: Enables formatting on save for all files (which you already had)
+    "editor.formatOnSave": true,
+
+    // 2. Python Specific Settings
+    "[python]": {
+        // Sets the Black Formatter extension as the default formatter for Python files
+        "editor.defaultFormatter": "ms-python.black-formatter",
+
+        // The key setting: tells VS Code to run "Organize Imports" (isort) on save
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+
+    // 3. isort Configuration
+    // Passes the --profile black argument to isort, ensuring its sorting style
+    // is compatible with Black's formatting rules.
+    "isort.args": [
+        "--profile",
+        "black"
+    ]
+}

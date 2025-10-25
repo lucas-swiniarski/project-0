@@ -29,9 +29,14 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 ## Pre-training
 
 1.  **Download the dataset:**
+    First auth in huggingface (you need a hugginface token):
+    ```bash
+    huggingface-cli login
+    ```
+
     This script will download the TinyStories and WikiText datasets, process them, and save them to the specified directory.
     ```bash
-    python3 -m dataset.pre_training.download_dataset --output-dir=/home/lucas/data/v1/raw/pre_training
+    python3 -m dataset.pre_training.download_all_datasets --output-dir=/home/lucas/data/v1/raw/pre_training
     ```
 
 2.  **Train the tokenizer:**
