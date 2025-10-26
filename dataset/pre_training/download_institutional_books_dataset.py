@@ -196,13 +196,13 @@ def main():
     parser.add_argument(
         "--n-val-books",
         type=int,
-        default=100,
+        default=50,
         help="The number of books for the validation set.",
     )
     parser.add_argument(
         "--n-test-books",
         type=int,
-        default=100,
+        default=50,
         help="The number of books for the test set.",
     )
     parser.add_argument(
