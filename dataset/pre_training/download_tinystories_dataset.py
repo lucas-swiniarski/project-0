@@ -2,14 +2,17 @@ import argparse
 import os
 
 from datasets import load_dataset
+
 from .download_dataset_utils import write_datasets
 
-def download_tinystories(output_dir: str):
+
+def download_tinystories(output_dir: str, num_proc: int):
     """
     Downloads the TinyStories dataset and saves it to the specified directory.
 
     Args:
         output_dir (str): The directory to save the dataset to.
+        num_proc (int): Number of threads.
     """
     print("Downloading TinyStories dataset...")
     dataset = load_dataset("roneneldan/TinyStories")
@@ -17,7 +20,7 @@ def download_tinystories(output_dir: str):
     write_datasets({
         "train": dataset["train"],
         "validation": dataset["validation"],
-    }, output_dir, "tinystories")
+    }, output_dir, "tinystories", num_proc=num_proc)
     
     print("TinyStories dataset downloaded and saved successfully.")
 

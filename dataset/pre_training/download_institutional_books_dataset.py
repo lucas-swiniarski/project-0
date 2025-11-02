@@ -1,15 +1,15 @@
 import argparse
 import concurrent.futures
+import glob
 import json
 import os
 import queue
-import tempfile
+import re
 import threading
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from itertools import islice
 from typing import Callable
 
-from datasets import Dataset, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 from tqdm import tqdm
 
 from .download_dataset_utils import write_datasets
@@ -20,8 +20,9 @@ def download_institutional_books(
     n_train_books: int = 70000,
     n_val_books: int = 100,
     n_test_books: int = 100,
-    max_threads: int = 8,
+    num_proc: int = 8,
     seed: int = 42,
+    books_per_file: int = 100,
 ):
     """Download institutional/institutional-books-1.0
 
@@ -30,8 +31,9 @@ def download_institutional_books(
         n_train_books (int): The number of books to download (1 book ~ 150k o200k tokens).
         n_val_books (int): The number of books for the validation set.
         n_test_books (int): The number of books for the test set.
-        max_threads (int): The maximum number of threads to use for processing.
+        num_proc (int): The maximum number of threads to use for processing.
         seed (int): Random seed for shuffling.
+        books_per_file (int): Number of books to save in each intermediate JSONL file.
     """
     print("Downloading institutional/institutional-books-1.0 dataset...")
     dataset = load_dataset(
@@ -46,51 +48,69 @@ def download_institutional_books(
     # Create an iterator from the shuffled dataset
     dataset_iterator = iter(shuffled_dataset)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        print(f"Using temporary directory: {tmpdir}")
+    # Use a persistent directory for intermediate JSONL files
+    jsonl_output_dir = os.path.join(output_dir, "institutional-books-1.0-jsonl")
+    os.makedirs(jsonl_output_dir, exist_ok=True)
+    print(f"Using intermediate directory for JSONL files: {jsonl_output_dir}")
 
-        # Process each split and write to temporary JSONL files
-        print("Processing train...")
-        train_output_file = os.path.join(tmpdir, "train.jsonl")
-        processor = SampleIteratorJob(
-            dataset_iterator, process_sample, train_output_file, n_train_books, max_workers=max_threads
-        )
-        processor.run()
-        print(f"Successfully processed {processor.writer_success_count} books for train.")
+    splits_to_process = {
+        "train": n_train_books,
+        "validation": n_val_books,
+        "test": n_test_books,
+    }
+
+    for split_name, n_books in splits_to_process.items():
+        print(f"--- Processing {split_name} split ---")
+        split_dir = os.path.join(jsonl_output_dir, split_name)
+        os.makedirs(split_dir, exist_ok=True)
+
+        # --- Resumption Logic ---
+        processed_books = 0
+        existing_files = glob.glob(os.path.join(split_dir, f"{split_name}_*.jsonl"))
+        if existing_files:
+            # Assume full files have `books_per_file` books.
+            processed_books = len(existing_files) * books_per_file
+            print(f"Found {len(existing_files)} existing files, resuming download. Already processed ~{processed_books} books.")
+
+        if processed_books >= n_books:
+            print(f"Already have {processed_books} books for {split_name}. Skipping.")
+            continue
+
+        # Skip already processed books in the dataset iterator
+        print(f"Skipping {processed_books} books in the dataset iterator...")
+        for _ in tqdm(islice(dataset_iterator, processed_books), total=processed_books, desc="Skipping books"):
+            pass
         
-        print("Processing validation...")
-        validation_output_file = os.path.join(tmpdir, "val.jsonl")
+        books_to_process_for_split = n_books - processed_books
+        print(f"Processing {books_to_process_for_split} more books for {split_name} split.")
+
         processor = SampleIteratorJob(
-            dataset_iterator, process_sample, validation_output_file, n_val_books, max_workers=max_threads
+            stream=dataset_iterator,
+            sample_processor=process_sample,
+            output_dir=split_dir,
+            file_prefix=split_name,
+            total_samples=books_to_process_for_split,
+            samples_per_file=books_per_file,
+            start_file_index=len(existing_files),
+            max_workers=num_proc,
         )
         processor.run()
-        print(f"Successfully processed {processor.writer_success_count} books for validation.")
-        
-        print("Processing test...")
-        test_output_file = os.path.join(tmpdir, "test.jsonl")
-        processor = SampleIteratorJob(
-            dataset_iterator, process_sample, test_output_file, n_test_books, max_workers=max_threads
-        )
-        processor.run()
-        print(f"Successfully processed {processor.writer_success_count} books for test.")
+        print(f"Successfully processed {processor.writer_success_count} additional books for {split_name}.")
 
-        # Load from JSONL and save to disk in Arrow format, apparently from_json streams ?
-        print("Converting temporary files to final dataset format...")
-        train_dataset = Dataset.from_json(train_output_file)
-        val_dataset = Dataset.from_json(validation_output_file)
-        test_dataset = Dataset.from_json(test_output_file)
-        val_dataset = val_dataset.rename_column('split', 'validation') # from_json does not have a split argument
-        test_dataset = test_dataset.rename_column('split', 'test')
+    # --- Final Conversion to Arrow Format ---
+    print("\nConverting all JSONL files to final Arrow dataset format...")
+    all_splits_data = {}
+    for split_name in splits_to_process:
+        split_dir = os.path.join(jsonl_output_dir, split_name)
+        jsonl_files = sorted(glob.glob(os.path.join(split_dir, f"{split_name}_*.jsonl")))
+        if jsonl_files:
+            print(f"Loading {len(jsonl_files)} files for {split_name} split...")
+            all_splits_data[split_name] = Dataset.from_json(jsonl_files)
 
-        write_datasets(
-            {
-                "train": train_dataset,
-                "validation": val_dataset,
-                "test": test_dataset,
-            },
-            output_dir,
-            "institutional-books-1.0",
-        )
+    if all_splits_data:
+        write_datasets(all_splits_data, output_dir, "institutional-books-1.0", num_proc=num_proc)
+    else:
+        print("No data was processed. Skipping final dataset creation.")
 
     print(
         "Institutional/institutional-books-1.0 dataset downloaded and saved successfully."
@@ -101,14 +121,18 @@ class SampleIteratorJob:
     def __init__(
         self,
         stream,
-        sample_processor: Callable[[dict[str, str]], tuple[str, int]],
-        tmpfile: str,
+        sample_processor: Callable[[dict], tuple[str, int]],
+        output_dir: str,
+        file_prefix: str,
         total_samples: int,
+        samples_per_file: int,
+        start_file_index: int = 0,
         max_workers: int = 8,
     ):
         self.stream = stream
         self.sample_processor = sample_processor
-        self.tmpfile = tmpfile
+        self.output_dir = output_dir
+        self.file_prefix = file_prefix
         self.max_workers = max_workers
         self.total_samples = total_samples
 
@@ -117,27 +141,43 @@ class SampleIteratorJob:
         self.writer_success_count = 0
         self.writer_failed_count = 0
         self.total_tokens_processed = 0
+        self.samples_per_file = samples_per_file
+        self.start_file_index = start_file_index
 
     def _writer(self):
-        """Writer thread that consumes processed samples and writes to a JSONL file."""
-        with open(self.tmpfile, "w", encoding="utf-8") as f:
-            while True:
-                try:
-                    text, n_tokens = self.processed_samples_queue.get()
-                    if text is None:
-                        # Signal that we're done writing.
-                        self.processed_samples_queue.task_done()
-                        break
-                    f.write(json.dumps({"text": text}) + "\n")
-                    with self.lock:
-                        self.writer_success_count += 1
-                        self.total_tokens_processed += n_tokens
-                except Exception as exc:
-                    with self.lock:
-                        self.writer_failed_count += 1
-                    print(f"Writer generated an exception: {exc}")
-                self.processed_samples_queue.task_done()
-    
+        """Writer thread that consumes processed samples and writes to chunked JSONL files."""
+        file_index = self.start_file_index
+        samples_in_current_file = 0
+        f = None
+
+        while True:
+            try:
+                text, n_tokens = self.processed_samples_queue.get()
+                if text is None:  # Sentinel value to stop
+                    if f:
+                        f.close()
+                    self.processed_samples_queue.task_done()
+                    break
+
+                if f is None or samples_in_current_file >= self.samples_per_file:
+                    if f:
+                        f.close()
+                    file_path = os.path.join(self.output_dir, f"{self.file_prefix}_{file_index:05d}.jsonl")
+                    f = open(file_path, "w", encoding="utf-8")
+                    file_index += 1
+                    samples_in_current_file = 0
+
+                f.write(json.dumps({"text": text}) + "\n")
+                samples_in_current_file += 1
+                with self.lock:
+                    self.writer_success_count += 1
+                    self.total_tokens_processed += n_tokens
+            except Exception as exc:
+                with self.lock:
+                    self.writer_failed_count += 1
+                print(f"Writer generated an exception: {exc}")
+            self.processed_samples_queue.task_done()
+
     def _sample_processor(self, sample):
         text, n_tokens = self.sample_processor(sample)
         self.processed_samples_queue.put((text, n_tokens))
@@ -150,7 +190,7 @@ class SampleIteratorJob:
 
         with tqdm(total=self.total_samples, desc="Processing books", ncols=120) as pbar:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                for sample in dataset_stream:
+                for i, sample in enumerate(dataset_stream):
                     executor.submit(self._sample_processor, sample)
                     pbar.update(1)
                     pbar.set_postfix(suc=self.writer_success_count,tok=f'{self.total_tokens_processed/1e6:.1f}M')
@@ -206,9 +246,15 @@ def main():
         help="The number of books for the test set.",
     )
     parser.add_argument(
-        "--max-threads",
+        "--books-per-file",
         type=int,
-        default=3,
+        default=100,
+        help="Number of books per intermediate JSONL file.",
+    )
+    parser.add_argument(
+        "--num-proc",
+        type=int,
+        default=8,
         help="The maximum number of threads to use for processing.",
     )
     parser.add_argument(
@@ -223,8 +269,9 @@ def main():
         args.n_train_books,
         args.n_val_books,
         args.n_test_books,
-        args.max_threads,
+        args.num_proc,
         args.seed,
+        args.books_per_file,
     )
 
 

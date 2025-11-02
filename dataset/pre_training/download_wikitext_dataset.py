@@ -2,17 +2,18 @@ import argparse
 import os
 import re
 
-from datasets import Dataset
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 
 from .download_dataset_utils import write_datasets
 
-def download_wikitext(output_dir: str):
+
+def download_wikitext(output_dir: str, num_proc: int):
     """
     Downloads the WikiText-103-raw-v1 dataset and saves it to the specified directory.
 
     Args:
         output_dir (str): The directory to save the dataset to.
+        num_proc (int): Number of threads.
     """
     print("Downloading WikiText-103-raw-v1 dataset...")
     dataset = load_dataset("wikitext", "wikitext-103-raw-v1")
@@ -27,7 +28,7 @@ def download_wikitext(output_dir: str):
         "train": coalesced_wikitext_train,
         "validation": coalesced_wikitext_validation,
         "test": coalesced_wikitext_test,
-    }, output_dir, "wikitext-103-raw-v1")
+    }, output_dir, "wikitext-103-raw-v1", num_proc=num_proc)
 
     print("WikiText-103-raw-v1 dataset downloaded and saved successfully.")
 
