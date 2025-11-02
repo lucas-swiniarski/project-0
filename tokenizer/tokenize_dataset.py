@@ -1,8 +1,11 @@
-import os
 import argparse
+import os
+
 from datasets import load_from_disk
 from tokenizers import Tokenizer
+
 import tokenizer.profiles as tokenizer_profiles
+
 
 def main():
     parser = argparse.ArgumentParser(description="Tokenize datasets using a trained tokenizer.")

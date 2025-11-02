@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.pre_tokenizers import Metaspace as MetaspacePreTokenizer
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from tokenizers.decoders import Metaspace as MetaspaceDecoder
-from tokenizers.processors import TemplateProcessing
+from tokenizers.models import BPE, Unigram
+from tokenizers.pre_tokenizers import Metaspace as MetaspacePreTokenizer
+from tokenizers.processors import ByteLevel, TemplateProcessing
 
 
 class TokenizerProfile(ABC):
@@ -39,6 +41,13 @@ class TokenizerProfile(ABC):
     def create_tokenizer(self) -> Tokenizer:
         """
         Init a tokenizer.
+        """
+        pass
+
+    @abstractmethod
+    def get_trainer(self, vocab_size: int):
+        """
+        Returns the trainer for this tokenizer profile.
         """
         pass
 
@@ -91,6 +100,10 @@ class PreTrainingV1(TokenizerProfile):
     def create_tokenizer(self) -> Tokenizer:
         tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
         return tokenizer
+
+    def get_trainer(self, vocab_size: int):
+        from tokenizers.trainers import BpeTrainer
+        return BpeTrainer(vocab_size=vocab_size, special_tokens=self.get_special_tokens())
 
     def format_example(self, example: Dict[str, Any], mode: str | None) -> Dict[str, Any]:
         return {"text": example["text"]}
@@ -153,6 +166,10 @@ class PostTrainingV1(TokenizerProfile):
     def create_tokenizer(self) -> Tokenizer:
         # Backward compatibility.
         return PreTrainingV1().create_tokenizer()  
+
+    def get_trainer(self, vocab_size: int):
+        # This profile is intended for fine-tuning, but we can allow training a tokenizer.
+        return PreTrainingV1().get_trainer(vocab_size)
 
     def format_example(self, example: Dict[str, Any], mode: str | None) -> Dict[str, Any]:
         """Formats an example based on the specified mode."""
@@ -291,7 +308,76 @@ class PostTrainingV1(TokenizerProfile):
         )
         return tokenizer
 
+
+class SentencePieceV2(TokenizerProfile):
+    """Profile for the pre-training phase."""
+    
+    def get_special_tokens(self) -> List[str]:
+        return ["[UNK]", "[PAD]", "[SOS]", "[EOS]", "<SYSTEM>", "</SYSTEM>", "<USER>", "</USER>", "<MODEL>", "</MODEL>"]
+    
+    def get_pad_token(self):
+        return "[PAD]"
+    
+    def get_stop_token(self):
+        return "</MODEL>"
+    
+    def create_tokenizer(self) -> Tokenizer:
+        tokenizer = Tokenizer(Unigram())
+        return tokenizer
+
+    def get_trainer(self, vocab_size: int):
+        from tokenizers.trainers import UnigramTrainer
+        return UnigramTrainer(
+            vocab_size=vocab_size,
+            show_progress=True,
+            special_tokens=self.get_special_tokens(),
+            unk_token="[UNK]"
+        )
+
+    def format_example(self, example: Dict[str, Any], mode: str | None) -> Dict[str, Any]:
+        return {"text": example["text"]}
+    
+    def tokenized_columns_to_remove(self, mode: str | None) -> List[str]:
+        return ["text"]
+
+    def tokenize_datasets(self, 
+                          examples: Dict[str, List], 
+                          tokenizer: Tokenizer, 
+                          mode: str | None = None) -> Dict[str, List[Any]]:
+        """Tokenizes text and adds SOS/EOS tokens."""
+        output = tokenizer.encode_batch(examples["text"])
+        sos_token_id = tokenizer.token_to_id("[SOS]")
+        eos_token_id = tokenizer.token_to_id("[EOS]")
+
+        all_token_ids = []
+        for encoding in output:
+            all_token_ids.append([sos_token_id] + encoding.ids + [eos_token_id])
+
+        return {"input_ids": all_token_ids}
+    
+    def configure_tokenizer(self, tokenizer: Tokenizer) -> Tokenizer:
+        """
+        Configures a loaded tokenizer with the correct pre-tokenizer, decoder,
+        and post-processor for pre-training.
+        """
+        # Set the pre-tokenizer to Metaspace to correctly handle spaces during decoding.
+        tokenizer.pre_tokenizer = MetaspacePreTokenizer()
+
+        # The decoder also needs to be explicitly set to Metaspace to correctly join
+        # subword tokens and handle spaces.
+        tokenizer.decoder = MetaspaceDecoder()
+
+        # Set up the post-processor to correctly handle special tokens during decoding.
+        tokenizer.post_processor = TemplateProcessing(
+            single="$A",  # The main sequence.
+            special_tokens=[
+                (token, tokenizer.token_to_id(token)) for token in self.get_special_tokens()
+            ],
+        )
+        return tokenizer
+
 TOKENIZER_NAME_TO_PROFILE = {
     'pre_training_v1': PreTrainingV1,
-    'post_training_v1': PostTrainingV1
+    'post_training_v1': PostTrainingV1,
+    'sentence_piece_v2': SentencePieceV2,
 }

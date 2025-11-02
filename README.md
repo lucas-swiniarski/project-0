@@ -36,13 +36,13 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 
     This script will download the TinyStories and WikiText datasets, process them, and save them to the specified directory.
     ```bash
-    python3 -m dataset.pre_training.download_all_datasets --output-dir=/home/lucas/data/v1/raw/pre_training
+    python3 -m dataset.pre_training.download_all_datasets --output-dir=/home/lucas/data/v2/raw/pre_training
     ```
 
 2.  **Train the tokenizer:**
     This script trains a new BPE tokenizer on the training data created in the previous step and saves it.
     ```bash
-    python3 -m tokenizer.train --dataset-dir /home/lucas/data/v1/raw/train --output-path /home/lucas/tokenizer/v1/tokenizer.json
+    python3 -m tokenizer.train_tokenizer --dataset-dir /home/lucas/data/v2/raw/pre_training --output-path /home/lucas/tokenizer/v2/tokenizer.json
     ```
 
 3.  **Tokenize the datasets:**
