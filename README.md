@@ -83,7 +83,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
 3.  **Tokenize the datasets:**
     This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
     You can adjust the number of processes with the `--num-proc` flag.
-    You can choose a selection of datasets --dataset-names institutional-books+tinystories or all.
+    You can choose a selection of datasets --dataset-names institutional-books tinystories.
     ```bash
     python3 -m tokenizer.tokenize_dataset \
         --dataset-dir /home/lucas/data/v2/raw/pre_training \
@@ -91,7 +91,8 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
         --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
         --output-dir /home/lucas/data/v2/tokenized/pre_training/ \
         --num-proc 4 \
-        --tokenizer-profile sentence_piece_v2
+        --tokenizer-profile sentence_piece_v2 \
+        --batch-size 32
     ```
 
 4.  **Inspect the tokenized data (Optional):**

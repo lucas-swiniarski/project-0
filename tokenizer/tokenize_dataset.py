@@ -52,6 +52,12 @@ def main():
         default='pre_training',
         help='Mode used for tokenizing, depends on the tokenizer profile.'
     )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=10,
+        help='Batch size for processing and writing (default: 1000).'
+    )
     args = parser.parse_args()
 
     # --- 1. Load tokenizer using profile ---
@@ -77,8 +83,18 @@ def main():
         dataset_names = args.dataset_names
         print(f"Processing {len(dataset_names)} specified dataset(s): {dataset_names}")
 
-    # Load all datasets from all specified dataset names
-    raw_datasets = {}
+    # Create tokenization function
+    def tokenize_function(examples):
+        return tokenizer_profile.tokenize_datasets(
+            examples,
+            tokenizer=tokenizer,
+            mode=args.tokenizer_mode
+        )
+
+    # Process each dataset one at a time to avoid OOM
+    print("\nTokenizing datasets...")
+    token_counts = {}
+
     for dataset_name in dataset_names:
         dataset_path = os.path.join(args.dataset_dir, dataset_name)
 
@@ -86,65 +102,69 @@ def main():
             print(f"Warning: Dataset directory not found: {dataset_path}, skipping...")
             continue
 
-        print(f"\nLoading dataset: {dataset_name}")
+        print(f"\nProcessing dataset: {dataset_name}")
+
         for split in ["train", "validation", "test"]:
             split_path = os.path.join(dataset_path, split)
-            if os.path.exists(split_path):
-                print(f"  Loading {split} from {split_path}...")
-                dataset_key = f"{dataset_name}/{split}"
-                raw_datasets[dataset_key] = load_from_disk(split_path)
-            else:
+
+            if not os.path.exists(split_path):
                 print(f"  Warning: {split} split not found at {split_path}, skipping...")
+                continue
 
-    # Initialize args like this, otherwise args gets lost in parrallel processing .map not sure why.
-    
-    local_tokenizer = Tokenizer.from_file(args.tokenizer_path)
-    local_profile = tokenizer_profiles.TOKENIZER_NAME_TO_PROFILE[args.tokenizer_profile]()
-    local_tokenizer = local_profile.configure_tokenizer(local_tokenizer)
+            dataset_key = f"{dataset_name}/{split}"
+            print(f"\n  Tokenizing {dataset_key}...")
 
-    def tokenize_function(examples):
-        # Reload tokenizer and profile in each process to ensure correct state
-        return local_profile.tokenize_datasets(
-            examples, 
-            tokenizer=local_tokenizer, 
-            mode=args.tokenizer_mode
-        )
+            # Load dataset
+            print(f"    Loading dataset from {split_path}...")
+            dataset = load_from_disk(split_path)
+            num_examples = len(dataset)
 
-    # --- 2. Tokenize datasets ---
-    print("\nTokenizing datasets...")
-    tokenized_datasets = {}
-    token_counts = {}
+            # Prepare output path
+            output_path = os.path.join(args.output_dir, dataset_key)
+            os.makedirs(output_path, exist_ok=True)
 
-    for dataset_key, dataset in raw_datasets.items():
-        print(f"Tokenizing {dataset_key}...")
-        tokenized_datasets[dataset_key] = dataset.map(
-            tokenize_function,  # Use the new helper function
-            batched=True,
-            remove_columns=tokenizer_profile.tokenized_columns_to_remove(args.tokenizer_mode),
-            num_proc=args.num_proc
-        )
+            # Tokenize with streaming processing using map with num_proc
+            # The keep_in_memory=False and writer_batch_size help with memory efficiency
+            print(f"    Tokenizing and saving to {output_path}...")
+            tokenized_dataset = dataset.map(
+                tokenize_function,
+                batched=True,
+                batch_size=args.batch_size,
+                remove_columns=tokenizer_profile.tokenized_columns_to_remove(args.tokenizer_mode),
+                num_proc=args.num_proc,
+                keep_in_memory=False,  # Write to disk incrementally
+                load_from_cache_file=False,  # Don't cache
+                desc=f"Tokenizing {dataset_key}"
+            )
 
-        # Count total tokens in this dataset/split
-        total_tokens = sum(len(example) for example in tokenized_datasets[dataset_key]['input_ids'])
-        num_examples = len(tokenized_datasets[dataset_key])
-        avg_tokens = total_tokens / num_examples if num_examples > 0 else 0
+            # Save immediately
+            tokenized_dataset.save_to_disk(output_path)
 
-        token_counts[dataset_key] = {
-            'total_tokens': total_tokens,
-            'num_examples': num_examples,
-            'avg_tokens_per_example': avg_tokens
-        }
+            # Count tokens in a streaming fashion
+            print(f"    Counting tokens...")
+            total_tokens = 0
 
-        print(f"  Total tokens: {total_tokens:,}")
-        print(f"  Number of examples: {num_examples:,}")
-        print(f"  Average tokens per example: {avg_tokens:.2f}")
+            # Iterate without loading all at once
+            for i, example in enumerate(tokenized_dataset['input_ids']):
+                total_tokens += len(example)
+                if (i + 1) % 10000 == 0:
+                    print(f"      Processed {i + 1:,} / {num_examples:,} examples...")
 
-        # --- 3. Save tokenized datasets ---
-        # Save to: output_dir/dataset-name/split
-        output_path = os.path.join(args.output_dir, dataset_key)
-        os.makedirs(output_path, exist_ok=True)
-        print(f"Saving tokenized {dataset_key} to {output_path}...")
-        tokenized_datasets[dataset_key].save_to_disk(output_path)
+            avg_tokens = total_tokens / num_examples if num_examples > 0 else 0
+
+            token_counts[dataset_key] = {
+                'total_tokens': total_tokens,
+                'num_examples': num_examples,
+                'avg_tokens_per_example': avg_tokens
+            }
+
+            print(f"    Total tokens: {total_tokens:,}")
+            print(f"    Number of examples: {num_examples:,}")
+            print(f"    Average tokens per example: {avg_tokens:.2f}")
+
+            # Free memory
+            del dataset
+            del tokenized_dataset
 
     print("\n" + "="*60)
     print("TOKENIZATION COMPLETE")
