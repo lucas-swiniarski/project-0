@@ -18,31 +18,26 @@ Examples:
 DATASET_CONFIGURATIONS = {
     # Small configuration for quick testing
     'small': {
-        'tinystories': 8,
-        'wikitext-103-raw-v1': 8,
-    },
-
-    # Medium configuration for development
-    'medium': {
-        'institutional-books-1.0': 1,
         'tinystories': 1,
         'wikitext-103-raw-v1': 1,
     },
 
-    # Full configuration for production training
-    'full': {
-        'institutional-books-1.0': 125,
-        'tinystories': 8,
-        'wikitext-103-raw-v1': 8,
+    # Medium configuration for development
+    'medium': {
+        'institutional-books-1.0': 2,
+        'tinystories': 1,
+        'wikitext-103-raw-v1': 1,
     },
 
-    # Books-focused configuration
-    'books-only': {
+    'institutional-books-only': {
         'institutional-books-1.0': 125,
     },
 
-    # Test with single dataset
     'tinystories-only': {
         'tinystories': 8,
+    },
+    
+    'wikitext-only': {
+        'wikitext-103-raw-v1': 8,
     },
 }

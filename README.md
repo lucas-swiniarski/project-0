@@ -40,9 +40,43 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     ```
 
 2.  **Train the tokenizer:**
-    This script trains a new BPE tokenizer on the training data created in the previous step and saves it.
+
+    We are using Sentencepiece library to train the tokenizer, then convert the trained tokenizer into huggingface format. The rest of the codebase use huggingface tokenizer interface.
+
+    **Important**: Some datasets like books have ~200k words per sample. Use `--chunk-size 1000` to split them into smaller samples for better tokenizer training. 1 chunk = 1 word, 1 word ~5 char, 1 char = 1 byte in utf-8, 1000 words ~ 8kb << 16 kb of train_sentencepiece's max seq length. In reality, 134 over 440k sentences too long with those hyper-params. 
+    You can control sentencepiece train size by changing max-lines (number of output samples of prepare_sentencepiece_corpus).
+
+    Step 2a: Prepare the corpus file from sharded datasets
+
     ```bash
-    python3 -m tokenizer.train_tokenizer --dataset-dir /home/lucas/data/v2/raw/pre_training --output-path /home/lucas/tokenizer/v2/tokenizer.json
+    python3 -m tokenizer.prepare_sentencepiece_corpus \
+        --dataset-dir /home/lucas/data/v2/raw/pre_training \
+        --output-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
+        --dataset-configuration medium \
+        --chunk-size 1000 \
+        --max-lines 50000 \
+        --shuffle
+    ```
+
+    Note: `--max-lines 300000` limits the output to 300K lines to prevent OOM during training. Adjust based on your RAM (16GB → ~300K lines is safe).
+
+    Step 2b: Train the SentencePiece model
+    ```bash
+    python3 -m tokenizer.train_sentencepiece \
+        --input-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
+        --model-prefix /home/lucas/tokenizer/v2/sentencepiece \
+        --vocab-size 64000 \
+        --model-type unigram \
+        --num-threads 8
+    ```
+
+    Note: We removed `--input-sentence-size` since the corpus file is already limited to 300K lines. SentencePiece will use all lines from the file.
+
+    Step 2c: Convert SentencePiece model to HuggingFace format (for use in training)
+    ```bash
+    python3 -m tokenizer.convert_sentencepiece_to_hf \
+        --sp-model-path /home/lucas/tokenizer/v2/sentencepiece.model \
+        --output-path /home/lucas/tokenizer/v2/tokenizer.json
     ```
 
 3.  **Tokenize the datasets:**
