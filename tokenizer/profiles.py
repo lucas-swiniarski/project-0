@@ -345,15 +345,17 @@ class SentencePieceV2(TokenizerProfile):
                           tokenizer: Tokenizer, 
                           mode: str | None = None) -> Dict[str, List[Any]]:
         """Tokenizes text and adds SOS/EOS tokens."""
-        output = tokenizer.encode_batch(examples["text"])
-        sos_token_id = tokenizer.token_to_id("[SOS]")
-        eos_token_id = tokenizer.token_to_id("[EOS]")
+        if mode == 'pre_training':
+            output = tokenizer.encode_batch(examples["text"])
+            sos_token_id = tokenizer.token_to_id("[SOS]")
+            eos_token_id = tokenizer.token_to_id("[EOS]")
 
-        all_token_ids = []
-        for encoding in output:
-            all_token_ids.append([sos_token_id] + encoding.ids + [eos_token_id])
+            all_token_ids = []
+            for encoding in output:
+                all_token_ids.append([sos_token_id] + encoding.ids + [eos_token_id])
 
-        return {"input_ids": all_token_ids}
+            return {"input_ids": all_token_ids}
+        raise NotImplementedError(f'Mode: {mode} not implemented.')
     
     def configure_tokenizer(self, tokenizer: Tokenizer) -> Tokenizer:
         """

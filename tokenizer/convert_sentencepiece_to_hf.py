@@ -9,17 +9,20 @@ import argparse
 import os
 
 import sentencepiece as spm
-from tokenizers import Tokenizer, pre_tokenizers, decoders, processors
+from tokenizers import Tokenizer
 from tokenizers.models import Unigram
 
+from tokenizer.profiles import TOKENIZER_NAME_TO_PROFILE
 
-def convert_sentencepiece_to_hf(sp_model_path: str, output_path: str):
+
+def convert_sentencepiece_to_hf(sp_model_path: str, output_path: str, tokenizer_profile_name: str):
     """
     Convert a SentencePiece model to HuggingFace Tokenizer format.
 
     Args:
         sp_model_path: Path to the .model file from sentencepiece
         output_path: Path to save the HuggingFace tokenizer (.json)
+        tokenizer_profile_name: Name of the tokenizer profile to use for configuration
     """
     # Load the sentencepiece model
     sp = spm.SentencePieceProcessor()
@@ -27,6 +30,14 @@ def convert_sentencepiece_to_hf(sp_model_path: str, output_path: str):
 
     print(f"Loaded SentencePiece model from {sp_model_path}")
     print(f"Vocabulary size: {sp.vocab_size()}")
+
+    # Get the tokenizer profile
+    profile_class = TOKENIZER_NAME_TO_PROFILE[tokenizer_profile_name]
+    profile = profile_class()
+    special_tokens = profile.get_special_tokens()
+
+    print(f"Using tokenizer profile: {tokenizer_profile_name}")
+    print(f"Special tokens: {special_tokens}")
 
     # Extract vocabulary and scores
     vocab = []
@@ -41,37 +52,8 @@ def convert_sentencepiece_to_hf(sp_model_path: str, output_path: str):
     # Create HuggingFace Unigram model with the vocabulary
     tokenizer = Tokenizer(Unigram(vocab, unk_id=0))
 
-    # Set up pre-tokenizer (Metaspace handles spaces like SentencePiece)
-    tokenizer.pre_tokenizer = pre_tokenizers.Metaspace()
-
-    # Set up decoder (Metaspace to properly decode)
-    tokenizer.decoder = decoders.Metaspace()
-
-    # Define special tokens (matching train_sentencepiece.py)
-    special_tokens = [
-        "[UNK]",
-        "[PAD]",
-        "[SOS]",
-        "[EOS]",
-        "<SYSTEM>",
-        "</SYSTEM>",
-        "<USER>",
-        "</USER>",
-        "<MODEL>",
-        "</MODEL>"
-    ]
-
-    # Set up post processor for special tokens
-    special_token_map = [
-        (token, tokenizer.token_to_id(token))
-        for token in special_tokens
-        if tokenizer.token_to_id(token) is not None
-    ]
-
-    tokenizer.post_processor = processors.TemplateProcessing(
-        single="$A",
-        special_tokens=special_token_map,
-    )
+    # Use the profile to configure the tokenizer (pre-tokenizer, decoder, post-processor)
+    tokenizer = profile.configure_tokenizer(tokenizer)
 
     # Save the tokenizer
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -125,6 +107,13 @@ def main():
         default='/home/lucas/tokenizer/v2/tokenizer.json',
         help='Path to save the HuggingFace tokenizer JSON file.'
     )
+    parser.add_argument(
+        '--tokenizer-profile',
+        type=str,
+        default='sentence_piece_v2',
+        choices=list(TOKENIZER_NAME_TO_PROFILE.keys()),
+        help='Tokenizer profile to use for configuration (default: sentence_piece_v2).'
+    )
 
     args = parser.parse_args()
 
@@ -133,7 +122,7 @@ def main():
         raise FileNotFoundError(f"SentencePiece model not found: {args.sp_model_path}")
 
     # Convert
-    convert_sentencepiece_to_hf(args.sp_model_path, args.output_path)
+    convert_sentencepiece_to_hf(args.sp_model_path, args.output_path, args.tokenizer_profile)
 
     print("\n" + "="*60)
     print("CONVERSION COMPLETE")

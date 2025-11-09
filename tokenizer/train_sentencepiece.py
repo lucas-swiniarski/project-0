@@ -12,6 +12,8 @@ import os
 
 import sentencepiece as spm
 
+from tokenizer.profiles import TOKENIZER_NAME_TO_PROFILE
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -79,6 +81,13 @@ def main():
         default=16384,
         help='Maximum sentence length in bytes. Lines longer than this are skipped. For books, use 4194304 (4MB). Default: 16384.'
     )
+    parser.add_argument(
+        '--tokenizer-profile',
+        type=str,
+        default='sentence_piece_v2',
+        choices=list(TOKENIZER_NAME_TO_PROFILE.keys()),
+        help='Tokenizer profile to use for special tokens (default: sentence_piece_v2).'
+    )
 
     args = parser.parse_args()
 
@@ -91,25 +100,18 @@ def main():
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    # Define special tokens matching your existing setup
-    special_tokens = [
-        "[UNK]",
-        "[PAD]",
-        "[SOS]",
-        "[EOS]",
-        "<SYSTEM>",
-        "</SYSTEM>",
-        "<USER>",
-        "</USER>",
-        "<MODEL>",
-        "</MODEL>"
-    ]
+    # Get special tokens from the selected profile
+    profile_class = TOKENIZER_NAME_TO_PROFILE[args.tokenizer_profile]
+    profile = profile_class()
+    special_tokens = profile.get_special_tokens()
 
     print(f"Training SentencePiece tokenizer...")
     print(f"  Input file: {args.input_file}")
     print(f"  Model prefix: {args.model_prefix}")
     print(f"  Vocab size: {args.vocab_size}")
     print(f"  Model type: {args.model_type}")
+    print(f"  Tokenizer profile: {args.tokenizer_profile}")
+    print(f"  Special tokens: {special_tokens}")
     print(f"  Max input sentences: {args.input_sentence_size:,}")
     print(f"  Threads: {args.num_threads}")
     print(f"  Character coverage: {args.character_coverage}")
@@ -184,9 +186,10 @@ def main():
         print(f"Decoded: {decoded}")
 
     print(f"\nVocabulary size: {sp.vocab_size()}")
-    print(f"Special tokens: {special_tokens[:4]}")
-    for token in special_tokens[:4]:
-        print(f"  {token} -> ID {sp.piece_to_id(token)}")
+    print(f"\nSpecial tokens and their IDs:")
+    for token in special_tokens:
+        token_id = sp.piece_to_id(token)
+        print(f"  {token:20s} -> ID {token_id}")
 
 
 if __name__ == "__main__":

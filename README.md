@@ -44,7 +44,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     We are using Sentencepiece library to train the tokenizer, then convert the trained tokenizer into huggingface format. The rest of the codebase use huggingface tokenizer interface.
 
     **Important**: Some datasets like books have ~200k words per sample. Use `--chunk-size 1000` to split them into smaller samples for better tokenizer training. 1 chunk = 1 word, 1 word ~5 char, 1 char = 1 byte in utf-8, 1000 words ~ 8kb << 16 kb of train_sentencepiece's max seq length. In reality, 134 over 440k sentences too long with those hyper-params. 
-    You can control sentencepiece train size by changing max-lines (number of output samples of prepare_sentencepiece_corpus).
+    You can control sentencepiece train size (and memory used by sentencepiece) by changing max-lines (number of output samples of prepare_sentencepiece_corpus). 100k lines of 1000 words ~=8Gb of ram for sentencepiece.
 
     Step 2a: Prepare the corpus file from sharded datasets
 
@@ -54,7 +54,7 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
         --output-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
         --dataset-configuration medium \
         --chunk-size 1000 \
-        --max-lines 50000 \
+        --max-lines 100000 \
         --shuffle
     ```
 
@@ -76,18 +76,22 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     ```bash
     python3 -m tokenizer.convert_sentencepiece_to_hf \
         --sp-model-path /home/lucas/tokenizer/v2/sentencepiece.model \
-        --output-path /home/lucas/tokenizer/v2/tokenizer.json
+        --output-path /home/lucas/tokenizer/v2/tokenizer.json \
+        --tokenizer-profile sentence_piece_v2
     ```
 
 3.  **Tokenize the datasets:**
     This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
     You can adjust the number of processes with the `--num-proc` flag.
+    You can choose a selection of datasets --dataset-names institutional-books+tinystories or all.
     ```bash
     python3 -m tokenizer.tokenize_dataset \
-        --dataset-dir /home/lucas/data/v1/raw/pre_training \
-        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
-        --output-dir /home/lucas/data/v1/tokenized/pre_training/v2 \
-        --num-proc 4
+        --dataset-dir /home/lucas/data/v2/raw/pre_training \
+        --dataset-names all \
+        --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
+        --output-dir /home/lucas/data/v2/tokenized/pre_training/ \
+        --num-proc 4 \
+        --tokenizer-profile sentence_piece_v2
     ```
 
 4.  **Inspect the tokenized data (Optional):**
