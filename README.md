@@ -19,188 +19,174 @@ This project uses PyTorch. It's recommended to run it within a Python virtual en
     conda install -c conda-forge datasets tokenizers tensorboard pynvml sentencepiece
     ```
 
-3. **Start tensorboard:**
-    Change logdir to your model ckpt_dir/tensorboard
+3.  **Fix PyTorch Intel MKL conflict (if needed):**
+    If you encounter `ImportError: undefined symbol: iJIT_NotifyEvent`, switch to OpenBLAS:
     ```bash
-    screen
-    tensorboard --logdir /home/lucas/project-0/checkpoints/25_10_15_pt_sft1/tensorboard/ --port 6006
+    conda install -n project-0-env "blas=*=openblas" -y
     ```
 
-## Pre-training
+## Data Preparation
 
-1.  **Download the dataset:**
-    First auth in huggingface (you need a hugginface token):
-    ```bash
-    huggingface-cli login
-    ```
+### 1. Download All Datasets
 
-    This script will download the TinyStories and WikiText datasets, process them, and save them to the specified directory.
-    ```bash
-    python3 -m dataset.pre_training.download_all_datasets --output-dir=/home/lucas/data/v2/raw/pre_training
-    ```
+First, authenticate with HuggingFace (you need a HuggingFace token):
+```bash
+huggingface-cli login
+```
 
-2.  **Train the tokenizer:**
+**Pre-training datasets:**
+This script will download the TinyStories, WikiText, and Institutional Books datasets.
+```bash
+python3 -m dataset.pre_training.download_all_datasets --output-dir=/home/lucas/data/v2/raw/pre_training
+```
 
-    We are using Sentencepiece library to train the tokenizer, then convert the trained tokenizer into huggingface format. The rest of the codebase use huggingface tokenizer interface.
+**SFT dataset:**
+This script will download the Alpaca cleaned dataset.
+```bash
+python3 -m dataset.post_training.sft.download_dataset --output-dir=/home/lucas/data/v2/raw/post_training/sft --tokenizer-profile=post_training_v1
+```
 
-    **Important**: Some datasets like books have ~200k words per sample. Use `--chunk-size 1000` to split them into smaller samples for better tokenizer training. 1 chunk = 1 word, 1 word ~5 char, 1 char = 1 byte in utf-8, 1000 words ~ 8kb << 16 kb of train_sentencepiece's max seq length. In reality, 134 over 440k sentences too long with those hyper-params. 
-    You can control sentencepiece train size (and memory used by sentencepiece) by changing max-lines (number of output samples of prepare_sentencepiece_corpus). 100k lines of 1000 words ~=8Gb of ram for sentencepiece.
+**RL dataset:**
+This script will download the OpenAssistant dataset.
+```bash
+python3 -m dataset.post_training.rl.download_openassistant_dataset --output-dir=/home/lucas/data/v2/raw/post_training/rl --tokenizer-profile=post_training_v1 --num-test-roots=500
+```
 
-    Step 2a: Prepare the corpus file from sharded datasets
+### 2. Train the Tokenizer
 
-    ```bash
-    python3 -m tokenizer.prepare_sentencepiece_corpus \
-        --dataset-dir /home/lucas/data/v2/raw/pre_training \
-        --output-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
-        --dataset-configuration medium \
-        --chunk-size 1000 \
-        --max-lines 100000 \
-        --shuffle
-    ```
+We are using SentencePiece library to train the tokenizer, then convert the trained tokenizer into HuggingFace format. The rest of the codebase uses the HuggingFace tokenizer interface.
 
-    Note: `--max-lines 300000` limits the output to 300K lines to prevent OOM during training. Adjust based on your RAM (16GB → ~300K lines is safe).
+**Important**: Some datasets like books have ~200k words per sample. Use `--chunk-size 1000` to split them into smaller samples for better tokenizer training. 1 chunk = 1 word, 1 word ~5 char, 1 char = 1 byte in utf-8, 1000 words ~ 8kb << 16 kb of train_sentencepiece's max seq length. In reality, 134 over 440k sentences are too long with those hyper-params.
+You can control sentencepiece train size (and memory used by sentencepiece) by changing max-lines (number of output samples of prepare_sentencepiece_corpus). 100k lines of 1000 words ~= 8GB of RAM for sentencepiece.
 
-    Step 2b: Train the SentencePiece model
-    ```bash
-    python3 -m tokenizer.train_sentencepiece \
-        --input-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
-        --model-prefix /home/lucas/tokenizer/v2/sentencepiece \
-        --vocab-size 64000 \
-        --model-type unigram \
-        --num-threads 8
-    ```
+**Step 2a: Prepare the corpus file from sharded datasets**
+```bash
+python3 -m tokenizer.prepare_sentencepiece_corpus \
+    --dataset-dir /home/lucas/data/v2/raw/pre_training \
+    --output-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
+    --dataset-configuration medium \
+    --chunk-size 1000 \
+    --max-lines 100000 \
+    --shuffle
+```
 
-    Note: We removed `--input-sentence-size` since the corpus file is already limited to 300K lines. SentencePiece will use all lines from the file.
+Note: `--max-lines 100000` limits the output to 100K lines to prevent OOM during training. Adjust based on your RAM (16GB → ~100K lines is safe, 32GB → ~300K lines).
 
-    Step 2c: Convert SentencePiece model to HuggingFace format (for use in training)
-    ```bash
-    python3 -m tokenizer.convert_sentencepiece_to_hf \
-        --sp-model-path /home/lucas/tokenizer/v2/sentencepiece.model \
-        --output-path /home/lucas/tokenizer/v2/tokenizer.json \
-        --tokenizer-profile sentence_piece_v2
-    ```
+**Step 2b: Train the SentencePiece model**
+```bash
+python3 -m tokenizer.train_sentencepiece \
+    --input-file /home/lucas/data/v2/raw/pre_training/sentencepiece_corpus.txt \
+    --model-prefix /home/lucas/tokenizer/v2/sentencepiece \
+    --vocab-size 64000 \
+    --model-type unigram \
+    --num-threads 16
+```
 
-3.  **Tokenize the datasets:**
-    This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
-    You can adjust the number of processes with the `--num-proc` flag.
-    You can choose a selection of datasets --dataset-names institutional-books tinystories.
-    ```bash
-    python3 -m tokenizer.tokenize_dataset \
-        --dataset-dir /home/lucas/data/v2/raw/pre_training \
-        --dataset-names all \
-        --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
-        --output-dir /home/lucas/data/v2/tokenized/pre_training/ \
-        --num-proc 4 \
-        --tokenizer-profile sentence_piece_v2 \
-        --batch-size 32
-    ```
+Note: We removed `--input-sentence-size` since the corpus file is already limited to 100K lines. SentencePiece will use all lines from the file.
 
-4.  **Inspect the tokenized data (Optional):**
-    This script allows you to interactively view how the raw text from the test set was tokenized. It's useful for verifying that the tokenizer is working as expected.
-    ```bash
-    python3 -m tokenizer.inspect_tokenized_data \
-        --raw-dataset-dir /home/lucas/data/v1/pre_training/raw/test \
-        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/v2/test \
-        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
-    ```
+**Step 2c: Convert SentencePiece model to HuggingFace format (for use in training)**
+```bash
+python3 -m tokenizer.convert_sentencepiece_to_hf \
+    --sp-model-path /home/lucas/tokenizer/v2/sentencepiece.model \
+    --output-path /home/lucas/tokenizer/v2/tokenizer.json \
+    --tokenizer-profile sentence_piece_v2
+```
 
-    This script counts the total number of tokens in the train, validation, and test sets after tokenization.
-    ```bash
-    python3 -m tokenizer.count_tokenized_data \
-        --tokenized-dir /home/lucas/data/v1/tokenized/pre_training/v2
-    ```    
+### 3. Tokenize All Datasets
 
-5.  **Run the main script (example):**
-    ```bash
-    python3 pre_training.py
-    ```
+**Pre-training datasets:**
+This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
+You can adjust the number of processes with the `--num-proc` flag.
+You can choose a selection of datasets with `--dataset-names institutional-books tinystories` or use `all`.
+```bash
+python3 -m tokenizer.tokenize_dataset \
+    --dataset-dir /home/lucas/data/v2/raw/pre_training \
+    --dataset-names all \
+    --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
+    --output-dir /home/lucas/data/v2/tokenized/pre_training/ \
+    --num-proc 12 \
+    --tokenizer-profile sentence_piece_v2 \
+    --batch-size 32
+```
 
-## Post-training - SFT
+**SFT dataset:**
+```bash
+python3 -m tokenizer.tokenize_dataset \
+    --dataset-dir /home/lucas/data/v2/raw/post_training/sft \
+    --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
+    --output-dir /home/lucas/data/v2/tokenized/post_training/sft \
+    --tokenizer-profile=post_training_v1 \
+    --tokenizer-mode=post_training_sft \
+    --num-proc 12
+```
 
-1.  **Download the dataset:**
-    This script will download the Alpaca cleaned datasets, process them, and save them to the specified directory.
-    ```bash
-    python3 -m dataset.post_training.sft.download_dataset --output-dir=/home/lucas/data/v1/raw/post_training/sft --tokenizer-profile=post_training_v1
-    ```
+**RL dataset:**
+```bash
+python3 -m tokenizer.tokenize_dataset \
+    --dataset-dir /home/lucas/data/v2/raw/post_training/rl \
+    --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json \
+    --output-dir /home/lucas/data/v2/tokenized/post_training/rl \
+    --tokenizer-profile=post_training_v1 \
+    --tokenizer-mode=post_training_rl \
+    --num-proc 12
+```
 
-2.  **Tokenize the datasets:**
-    This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
-    You can adjust the number of processes with the `--num-proc` flag.
-    ```bash
-    python3 -m tokenizer.tokenize_dataset \
-        --dataset-dir /home/lucas/data/v1/raw/post_training/sft \
-        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
-        --output-dir /home/lucas/data/v1/tokenized/post_training/sft \
-        --tokenizer-profile=post_training_v1 \
-        --tokenizer-mode=post_training_sft \
-        --num-proc 4
-    ```
+### 4. Inspect Tokenized Data (Optional)
 
-3.  **Inspect the tokenized data (Optional):**
-    ```bash
-    python3 -m tokenizer.inspect_tokenized_data \
-        --raw-dataset-dir /home/lucas/data/v1/raw/post_training/sft/train \
-        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/post_training/sft/train \
-        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
-    ```
+**View tokenized samples:**
+This script allows you to interactively view how the raw text from the test set was tokenized. It's useful for verifying that the tokenizer is working as expected.
+```bash
+python3 -m tokenizer.inspect_tokenized_data \
+    --raw-dataset-dir /home/lucas/data/v2/raw/pre_training/test \
+    --tokenized-dataset-dir /home/lucas/data/v2/tokenized/pre_training/test \
+    --tokenizer-path /home/lucas/tokenizer/v2/tokenizer.json
+```
 
-     This script counts the total number of tokens in the train, validation, and test sets after tokenization.
-    ```bash
-    python3 -m tokenizer.count_tokenized_data \
-        --tokenized-dir /home/lucas/data/v1/tokenized/post_training/sft
-    ```    
+**Count tokens:**
+This script counts the total number of tokens in the train, validation, and test sets after tokenization.
+```bash
+python3 -m tokenizer.count_tokenized_data \
+    --tokenized-dir /home/lucas/data/v2/tokenized/pre_training
+```
 
-4. **Train model:**
-    First change parameters of post_training_sft.py
+## Model Training
 
-    Then run
-    ```bash
-    python3 post_training_sft.py
-    ```
-    
+### 1. Start TensorBoard
 
-## Post-training - DPO
+Change logdir to your model ckpt_dir/tensorboard:
+```bash
+screen
+tensorboard --logdir /home/lucas/project-0/checkpoints/25_10_15_pt_sft1/tensorboard/ --port 6006
+```
 
-1.  **Download the dataset:**
-    This script will download the Openassistant cleaned datasets, process them, and save them to the specified directory.
-    ```bash
-    python3 -m dataset.post_training.rl.download_openassistant_dataset --output-dir=/home/lucas/data/v1/raw/post_training/rl --tokenizer-profile=post_training_v1 --num-test-roots=500
-    ```
+### 2. Pre-training
 
-2.  **Tokenize the datasets:**
-    This script uses the trained tokenizer to convert the raw text datasets (train, validation, test) into sequences of token IDs.
-    You can adjust the number of processes with the `--num-proc` flag.
-    ```bash
-    python3 -m tokenizer.tokenize_dataset \
-        --dataset-dir /home/lucas/data/v1/raw/post_training/rl \
-        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json \
-        --output-dir /home/lucas/data/v1/tokenized/post_training/rl \
-        --tokenizer-profile=post_training_v1 \
-        --tokenizer-mode=post_training_rl \
-        --num-proc 4
-    ```
+First, change parameters in `pre_training.py` as needed.
 
-3.  **Inspect the tokenized data (Optional):**
-    ```bash
-    python3 -m tokenizer.inspect_tokenized_data \
-        --raw-dataset-dir /home/lucas/data/v1/raw/post_training/rl/train \
-        --tokenized-dataset-dir /home/lucas/data/v1/tokenized/post_training/rl/train \
-        --tokenizer-path /home/lucas/tokenizer/v1/tokenizer.json
-    ```
+Then run:
+```bash
+python3 pre_training.py
+```
 
-     This script counts the total number of tokens in the train, validation, and test sets after tokenization.
-    ```bash
-    python3 -m tokenizer.count_tokenized_data \
-        --tokenized-dir /home/lucas/data/v1/tokenized/post_training/sft
-    ```  
+### 3. Supervised Fine-Tuning (SFT)
 
-4. **Train model:**
-    First change parameters of post_training_rl.py, then run:
+First, change parameters in `post_training_sft.py` as needed.
 
-    ```bash
-    python3 post_training_rl.py
-    ```
-## Orders of magnitude
+Then run:
+```bash
+python3 post_training_sft.py
+```
+
+### 4. Reinforcement Learning (DPO)
+
+First, change parameters in `post_training_rl.py` as needed.
+
+Then run:
+```bash
+python3 post_training_rl.py
+```
+
+## Orders of Magnitude
 
 1. Training capacity: 1 nvidia L4 - 24 GB vram - 2.42×10^14 FLOPS * 3600 * 24 = 2x10^19 FLOPs (f16)
 

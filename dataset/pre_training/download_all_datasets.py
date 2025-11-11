@@ -28,14 +28,15 @@ def main():
     args = parser.parse_args()
     print(f'Downloading pre-training datasets to {args.output_dir}...')
     os.makedirs(args.output_dir, exist_ok=True)
-    download_tinystories(args.output_dir, args.num_proc)
-    download_wikitext(args.output_dir, args.num_proc)    
+    # download_tinystories(args.output_dir, args.num_proc)
+    # download_wikitext(args.output_dir, args.num_proc)    
     download_institutional_books(args.output_dir,
-                                 n_books=70000,
+                                 n_train_books=70000,
                                  n_val_books=100,
                                  n_test_books=100,
                                  num_proc=args.num_proc,
-                                 seed=1)
+                                 seed=1,
+                                 books_per_file=100)
     print("\nAll pre-training datasets have been downloaded.")
 
 if __name__ == "__main__":
