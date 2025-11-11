@@ -188,6 +188,8 @@ python3 post_training_rl.py
 
 ## Orders of Magnitude
 
+### Training
+
 1. Training capacity: 1 nvidia L4 - 24 GB vram - 2.42×10^14 FLOPS * 3600 * 24 = 2x10^19 FLOPs (f16)
 
 2. Assuming FLOPs ~ 6 x N x D - N trainset tokens, D model params, 100 tokens per params, that's 170M params, 17B tokens.
@@ -197,3 +199,57 @@ python3 post_training_rl.py
 * TODO: architecture math. Guides: gpt-2 small is 12 layers, 768 hidden dim, need attention architecture + intermediate size / experts + embedding table.
 
 4. vram: 0.32 gb for model + 1x for gradients, +2x for adam = 1.2 gb vram.
+
+### Data
+
+============================================================
+TOKENIZATION COMPLETE
+============================================================
+
+Token count summary:
+
+wikitext-103-raw-v1/train:
+  Total tokens: 136,856,140
+  Number of examples: 29,436
+  Average tokens per example: 4649.28
+
+wikitext-103-raw-v1/validation:
+  Total tokens: 289,016
+  Number of examples: 60
+  Average tokens per example: 4816.93
+
+wikitext-103-raw-v1/test:
+  Total tokens: 326,910
+  Number of examples: 62
+  Average tokens per example: 5272.74
+
+institutional-books-1.0/train:
+  Total tokens: 19,014,797,876
+  Number of examples: 70,000
+  Average tokens per example: 271639.97
+
+institutional-books-1.0/validation:
+  Total tokens: 26,675,576
+  Number of examples: 100
+  Average tokens per example: 266755.76
+
+institutional-books-1.0/test:
+  Total tokens: 22,766,547
+  Number of examples: 100
+  Average tokens per example: 227665.47
+
+tinystories/train:
+  Total tokens: 466,997,543
+  Number of examples: 2,119,719
+  Average tokens per example: 220.31
+
+tinystories/validation:
+  Total tokens: 4,697,526
+  Number of examples: 21,990
+  Average tokens per example: 213.62
+
+------------------------------------------------------------
+GRAND TOTAL:
+  Total tokens across all datasets: 19,673,407,134
+  Total examples across all datasets: 2,241,467
+  Overall average tokens per example: 8777.02
