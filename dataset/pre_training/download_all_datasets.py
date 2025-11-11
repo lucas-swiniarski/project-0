@@ -28,8 +28,8 @@ def main():
     args = parser.parse_args()
     print(f'Downloading pre-training datasets to {args.output_dir}...')
     os.makedirs(args.output_dir, exist_ok=True)
-    # download_tinystories(args.output_dir, args.num_proc)
-    # download_wikitext(args.output_dir, args.num_proc)    
+    download_tinystories(args.output_dir, args.num_proc)
+    download_wikitext(args.output_dir, args.num_proc)    
     download_institutional_books(args.output_dir,
                                  n_train_books=70000,
                                  n_val_books=100,
